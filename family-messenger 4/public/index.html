@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Семейный мессенджер</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ЭКРАН АВТОРИЗАЦИИ -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <h1>💬 Семейный мессенджер</h1>
+    <div class="tabs">
+      <button id="tab-login" class="tab active">Вход</button>
+      <button id="tab-register" class="tab">Регистрация</button>
+    </div>
+    <input id="auth-username" type="text" placeholder="Имя пользователя" />
+    <input id="auth-password" type="password" placeholder="Пароль" />
+    <button id="auth-submit" class="primary-btn">Войти</button>
+    <p id="auth-error" class="error"></p>
+  </div>
+</div>
+
+<!-- ОСНОВНОЙ ЭКРАН -->
+<div id="app-screen" class="app-screen hidden">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span id="me-username"></span>
+      <button id="new-chat-btn" title="Новый чат">✚</button>
+      <button id="logout-btn" title="Выйти">⎋</button>
+    </div>
+    <div id="chat-list" class="chat-list"></div>
+  </aside>
+
+  <main class="chat-window">
+    <div id="empty-state" class="empty-state">Выбери чат слева, чтобы начать переписку</div>
+
+    <div id="active-chat" class="active-chat hidden">
+      <div class="chat-header">
+        <button id="back-btn" class="back-btn" title="Назад">←</button>
+        <span id="chat-title"></span>
+        <span id="typing-indicator" class="typing-indicator"></span>
+        <button id="call-btn" class="call-header-btn hidden" title="Позвонить">📞</button>
+      </div>
+      <div id="messages" class="messages"></div>
+      <form id="message-form" class="message-form">
+        <div class="attach-menu-wrapper">
+          <button type="button" id="attach-toggle-btn" class="attach-btn" title="Прикрепить">➕</button>
+          <div id="attach-menu" class="attach-menu hidden">
+            <label class="attach-menu-item">
+              📎 Фото
+              <input type="file" id="file-input" accept="image/*" hidden />
+            </label>
+            <button type="button" id="location-btn" class="attach-menu-item">📍 Геолокация</button>
+          </div>
+        </div>
+        <input id="message-input" type="text" placeholder="Сообщение..." autocomplete="off" />
+        <button type="submit" class="primary-btn">Отпр.</button>
+      </form>
+    </div>
+  </main>
+</div>
+
+<!-- МОДАЛКА НОВОГО ЧАТА -->
+<div id="new-chat-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Новый чат</h3>
+    <input id="user-search" type="text" placeholder="Найти пользователя..." />
+    <div id="user-results" class="user-results"></div>
+    <button id="close-modal-btn" class="secondary-btn">Закрыть</button>
+  </div>
+</div>
+
+<!-- ВХОДЯЩИЙ ЗВОНОК -->
+<div id="incoming-call-modal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar">📞</div>
+    <h3 id="incoming-call-name">Входящий звонок...</h3>
+    <div class="call-actions">
+      <button id="decline-call-btn" class="call-btn decline">Отклонить</button>
+      <button id="accept-call-btn" class="call-btn accept">Ответить</button>
+    </div>
+  </div>
+</div>
+
+<!-- АКТИВНЫЙ ЗВОНОК -->
+<div id="active-call-bar" class="active-call-bar hidden">
+  <span id="active-call-name">Звонок...</span>
+  <div class="active-call-controls">
+    <button id="mute-call-btn" title="Микрофон">🎙️</button>
+    <button id="hangup-call-btn" title="Завершить">📵</button>
+  </div>
+</div>
+<audio id="remote-audio" autoplay></audio>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
