@@ -72,10 +72,26 @@ function startApp() {
   socket.on('message:new', onMessageNew);
   socket.on('typing', onTyping);
   socket.on('presence:update', onPresence);
+  socket.on('connect', resyncAfterReconnect);
   attachCallSocketHandlers();
 
   loadChats();
   setupPush();
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') resyncAfterReconnect();
+  });
+}
+
+async function resyncAfterReconnect() {
+  await loadChats();
+  if (activeChatId) {
+    const messages = await api(`/api/chats/${activeChatId}/messages`);
+    const box = $('#messages');
+    box.innerHTML = '';
+    messages.forEach(renderMessage);
+    box.scrollTop = box.scrollHeight;
+  }
 }
 
 async function api(path, options = {}) {
