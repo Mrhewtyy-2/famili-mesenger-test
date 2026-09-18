@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<meta name="theme-color" content="#2d6a4f" />
+<link rel="manifest" href="/manifest.json" />
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/icons/icon-192.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="Mío" />
+<title>Mío</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<!-- ЭКРАН АВТОРИЗАЦИИ -->
+<div id="auth-screen" class="auth-screen">
+  <div class="auth-card">
+    <img src="/icons/icon-192.png" alt="Mío" class="auth-logo" />
+    <h1>Mío</h1>
+    <label class="dark-mode-toggle auth-dark-toggle">
+      <input type="checkbox" id="auth-dark-toggle" /> 🌙 Тёмная тема
+    </label>
+    <div class="tabs">
+      <button id="tab-login" class="tab active">Вход</button>
+      <button id="tab-register" class="tab">Регистрация</button>
+    </div>
+    <input id="auth-username" type="text" placeholder="Имя пользователя" />
+    <input id="auth-password" type="password" placeholder="Пароль" />
+    <button id="auth-submit" class="primary-btn">Войти</button>
+    <p id="auth-error" class="error"></p>
+  </div>
+</div>
+
+<!-- ОСНОВНОЙ ЭКРАН -->
+<div id="app-screen" class="app-screen hidden">
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span id="me-avatar" class="avatar-circle"></span>
+      <span id="me-username"></span>
+      <button id="settings-btn" title="Настройки профиля">⚙️</button>
+      <button id="new-chat-btn" title="Новый чат">✚</button>
+      <button id="logout-btn" title="Выйти">⎋</button>
+    </div>
+    <div id="chat-list" class="chat-list"></div>
+  </aside>
+
+  <main class="chat-window">
+    <div id="empty-state" class="empty-state">Выбери чат слева, чтобы начать переписку</div>
+
+    <div id="active-chat" class="active-chat hidden">
+      <div id="selection-bar" class="selection-bar hidden">
+        <button type="button" id="selection-cancel-btn">✕</button>
+        <span id="selection-count">Выбрано 0</span>
+        <button type="button" id="selection-delete-btn" title="Удалить">🗑</button>
+      </div>
+      <div id="chat-header" class="chat-header">
+        <button id="back-btn" class="back-btn" title="Назад">←</button>
+        <button id="chat-header-info" class="chat-header-info">
+          <span id="chat-avatar" class="avatar-circle"></span>
+          <span class="chat-header-texts">
+            <span id="chat-title"></span>
+            <span id="presence-label" class="presence-label"></span>
+          </span>
+        </button>
+        <span id="typing-indicator" class="typing-indicator"></span>
+        <button id="call-btn" class="call-header-btn hidden" title="Позвонить">📞</button>
+        <div class="chat-menu-wrapper">
+          <button id="chat-menu-btn" class="call-header-btn" title="Настройки чата">⋮</button>
+          <div id="chat-menu" class="attach-menu chat-menu hidden">
+            <button type="button" id="search-in-chat-btn" class="attach-menu-item">🔍 Поиск по чату</button>
+            <button type="button" id="mute-chat-btn" class="attach-menu-item">🔕 Отключить уведомления</button>
+            <button type="button" id="wallpaper-btn" class="attach-menu-item">🖼️ Фон чата</button>
+            <button type="button" id="clear-history-btn" class="attach-menu-item">🗑️ Очистить историю</button>
+            <button type="button" id="delete-chat-btn" class="attach-menu-item">❌ Удалить чат</button>
+          </div>
+        </div>
+      </div>
+      <div id="pinned-banner" class="pinned-banner hidden">
+        <span class="pinned-icon">📌</span>
+        <span id="pinned-banner-text" class="pinned-banner-text"></span>
+        <button type="button" id="unpin-btn" title="Открепить">✕</button>
+      </div>
+      <div id="chat-search-bar" class="chat-search-bar hidden">
+        <input id="chat-search-input" type="text" placeholder="Поиск по переписке..." />
+        <span id="chat-search-count" class="chat-search-count"></span>
+        <button type="button" id="chat-search-prev" title="Предыдущее">↑</button>
+        <button type="button" id="chat-search-next" title="Следующее">↓</button>
+        <button type="button" id="chat-search-close" title="Закрыть">✕</button>
+      </div>
+      <div id="messages" class="messages"></div>
+      <div id="reply-preview" class="reply-preview hidden">
+        <div class="reply-preview-info">
+          <span id="reply-preview-sender"></span>
+          <span id="reply-preview-text"></span>
+        </div>
+        <button type="button" id="cancel-reply-btn">✕</button>
+      </div>
+      <div id="attachment-preview" class="attachment-preview hidden">
+        <img id="attachment-preview-img" src="" />
+        <video id="attachment-preview-video" muted hidden></video>
+        <button type="button" id="remove-attachment-btn" title="Убрать">✕</button>
+      </div>
+      <form id="message-form" class="message-form">
+        <div id="mention-suggestions" class="mention-suggestions hidden"></div>
+        <div class="input-pill">
+          <div class="emoji-wrapper">
+            <button type="button" id="emoji-toggle-btn" class="pill-icon-btn" title="Эмодзи">🙂</button>
+            <div id="emoji-panel" class="emoji-panel hidden"></div>
+          </div>
+          <input id="message-input" type="text" placeholder="Сообщение" autocomplete="off" />
+          <div class="attach-menu-wrapper">
+            <button type="button" id="attach-toggle-btn" class="pill-icon-btn" title="Прикрепить">📎</button>
+            <div id="attach-menu" class="attach-menu hidden">
+              <label class="attach-menu-item">
+                📷 Фото
+                <input type="file" id="file-input" accept="image/*" hidden />
+              </label>
+              <label class="attach-menu-item">
+                🎥 Видео
+                <input type="file" id="video-input" accept="video/*" hidden />
+              </label>
+            </div>
+          </div>
+        </div>
+        <button type="button" id="send-or-mic-btn" class="send-circle-btn" title="Отправить">🎤</button>
+      </form>
+    </div>
+  </main>
+</div>
+
+<!-- МОДАЛКА НОВОГО ЧАТА -->
+<div id="new-chat-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Новый чат</h3>
+    <div class="tabs">
+      <button id="new-chat-tab-private" class="tab active">Личный</button>
+      <button id="new-chat-tab-group" class="tab">Группа</button>
+    </div>
+
+    <div id="private-chat-section">
+      <input id="user-search" type="text" placeholder="Найти пользователя..." />
+      <div id="user-results" class="user-results"></div>
+    </div>
+
+    <div id="group-chat-section" class="hidden">
+      <input id="group-name-input" type="text" placeholder="Название группы" maxlength="60" />
+      <input id="group-user-search" type="text" placeholder="Добавить участников..." />
+      <div id="group-selected-chips" class="selected-chips"></div>
+      <div id="group-user-results" class="user-results"></div>
+      <button id="create-group-btn" class="primary-btn" disabled>Создать группу</button>
+    </div>
+
+    <button id="close-modal-btn" class="secondary-btn">Закрыть</button>
+  </div>
+</div>
+
+<!-- ИНФОРМАЦИЯ О ГРУППЕ -->
+<div id="group-info-modal" class="modal hidden">
+  <div class="modal-card profile-card">
+    <div class="avatar-upload">
+      <span id="group-info-avatar" class="avatar-circle large"></span>
+      <label class="secondary-btn avatar-upload-label">
+        Изменить фото
+        <input type="file" id="group-avatar-input" accept="image/*" hidden />
+      </label>
+    </div>
+    <input id="group-info-title-input" type="text" class="group-title-input" maxlength="60" />
+    <p id="group-info-count" class="profile-username"></p>
+
+    <div id="group-members-list" class="user-results group-members-list"></div>
+
+    <p class="settings-label">Добавить участника</p>
+    <input id="group-add-user-search" type="text" placeholder="Найти пользователя..." />
+    <div id="group-add-user-results" class="user-results"></div>
+
+    <button id="leave-group-btn" class="secondary-btn leave-btn">Покинуть группу</button>
+    <button id="close-group-info-btn" class="secondary-btn">Закрыть</button>
+  </div>
+</div>
+
+<!-- ВХОДЯЩИЙ ЗВОНОК -->
+<div id="incoming-call-modal" class="modal hidden">
+  <div class="modal-card call-card">
+    <div class="call-avatar">📞</div>
+    <h3 id="incoming-call-name">Входящий звонок...</h3>
+    <div class="call-actions">
+      <button id="decline-call-btn" class="call-btn decline">Отклонить</button>
+      <button id="accept-call-btn" class="call-btn accept">Ответить</button>
+    </div>
+  </div>
+</div>
+
+<!-- АКТИВНЫЙ ЗВОНОК -->
+<div id="active-call-bar" class="active-call-bar hidden">
+  <span id="active-call-name">Звонок...</span>
+  <div class="active-call-controls">
+    <button id="mute-call-btn" title="Микрофон">🎙️</button>
+    <button id="hangup-call-btn" title="Завершить">📵</button>
+  </div>
+</div>
+<audio id="remote-audio" autoplay></audio>
+
+<!-- ИНДИКАТОР ЗАПИСИ ГОЛОСОВОГО -->
+<div id="recording-bar" class="recording-bar hidden">
+  <span class="recording-dot"></span>
+  <span id="recording-time">0:00</span>
+  <span>Запись...</span>
+  <button type="button" id="cancel-recording-btn" class="secondary-btn">Отмена</button>
+  <button type="button" id="stop-recording-btn" class="primary-btn">Отправить</button>
+</div>
+
+<!-- ПРОФИЛЬ СОБЕСЕДНИКА -->
+<div id="profile-modal" class="page-panel hidden">
+  <div class="page-header">
+    <button id="close-profile-btn" class="page-back-btn">← Назад</button>
+  </div>
+  <div class="modal-card profile-card">
+    <span id="profile-avatar" class="avatar-circle xlarge"></span>
+    <h3 id="profile-name"></h3>
+    <p id="profile-username" class="profile-username"></p>
+    <p id="profile-presence" class="presence-label"></p>
+    <div id="profile-details" class="profile-info-list"></div>
+    <button id="toggle-verify-btn" class="secondary-btn hidden"></button>
+    <button id="toggle-premium-btn" class="secondary-btn hidden"></button>
+  </div>
+</div>
+
+<!-- ПРОСМОТР ФОТО НА ВЕСЬ ЭКРАН -->
+<div id="image-lightbox" class="lightbox hidden">
+  <img id="lightbox-img" src="" />
+</div>
+
+<!-- ФОН ЧАТА -->
+<div id="wallpaper-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Фон чата</h3>
+    <div id="wallpaper-presets" class="wallpaper-presets"></div>
+    <label class="secondary-btn avatar-upload-label">
+      Загрузить своё фото
+      <input type="file" id="wallpaper-upload-input" accept="image/*" hidden />
+    </label>
+    <button id="wallpaper-reset-btn" class="secondary-btn">Сбросить (по умолчанию)</button>
+    <button id="close-wallpaper-btn" class="secondary-btn">Закрыть</button>
+  </div>
+</div>
+
+<!-- ПЕРЕСЫЛКА СООБЩЕНИЯ -->
+<div id="forward-modal" class="modal hidden">
+  <div class="modal-card">
+    <h3>Переслать в чат</h3>
+    <div id="forward-chat-list" class="user-results"></div>
+    <button id="close-forward-btn" class="secondary-btn">Отмена</button>
+  </div>
+</div>
+
+<!-- МЕНЮ ДЕЙСТВИЙ С СООБЩЕНИЕМ -->
+<div id="message-menu" class="modal hidden">
+  <div class="modal-card message-menu-card">
+    <div id="message-menu-reactions" class="message-menu-reactions"></div>
+    <div id="message-menu-actions" class="message-menu-actions"></div>
+    <p id="message-menu-status" class="message-menu-status"></p>
+    <button id="message-menu-cancel" class="secondary-btn">Отмена</button>
+  </div>
+</div>
+
+<!-- НАСТРОЙКИ ПРОФИЛЯ -->
+<div id="settings-modal" class="page-panel hidden">
+  <div class="page-header">
+    <button id="close-settings-btn" class="page-back-btn">← Назад</button>
+  </div>
+  <div class="modal-card profile-settings-card">
+    <div class="avatar-upload">
+      <div class="avatar-camera-wrap">
+        <span id="avatar-preview" class="avatar-circle xlarge"></span>
+        <label class="avatar-camera-btn" title="Изменить фото">
+          📷
+          <input type="file" id="avatar-input" accept="image/*" hidden />
+        </label>
+      </div>
+      <input id="display-name-input" type="text" class="profile-name-input" placeholder="Имя" maxlength="40" />
+      <span id="username-readonly-label" class="profile-username-label"></span>
+    </div>
+
+    <div class="profile-info-list">
+      <div class="profile-info-row">
+        <span class="profile-info-icon">📝</span>
+        <div class="profile-info-field">
+          <span class="profile-info-caption">О себе</span>
+          <input id="bio-input" type="text" placeholder="Расскажи немного о себе" maxlength="140" />
+        </div>
+      </div>
+      <div class="profile-info-row">
+        <span class="profile-info-icon">📞</span>
+        <div class="profile-info-field">
+          <span class="profile-info-caption">Телефон</span>
+          <input id="phone-input" type="tel" placeholder="+7 900 000-00-00" maxlength="30" />
+        </div>
+      </div>
+      <div class="profile-info-row">
+        <span class="profile-info-icon">🎂</span>
+        <div class="profile-info-field">
+          <span class="profile-info-caption">Дата рождения</span>
+          <input id="birthday-input" type="date" />
+        </div>
+      </div>
+    </div>
+
+    <button id="save-name-btn" class="primary-btn">Сохранить изменения</button>
+    <button id="self-verify-btn" class="secondary-btn hidden"></button>
+    <button id="self-premium-btn" class="secondary-btn hidden"></button>
+
+    <p class="settings-label">Цвет темы</p>
+    <div id="theme-swatches" class="theme-swatches">
+      <button type="button" class="swatch" data-color="#2AABEE" style="background:#2AABEE"></button>
+      <button type="button" class="swatch" data-color="#30a46c" style="background:#30a46c"></button>
+      <button type="button" class="swatch" data-color="#8e4ec6" style="background:#8e4ec6"></button>
+      <button type="button" class="swatch" data-color="#e5484d" style="background:#e5484d"></button>
+      <button type="button" class="swatch" data-color="#f76b15" style="background:#f76b15"></button>
+      <label class="swatch custom-swatch" title="Свой цвет">
+        🎨
+        <input type="color" id="custom-color-input" value="#2AABEE" />
+      </label>
+    </div>
+
+    <label class="dark-mode-toggle">
+      <input type="checkbox" id="dark-mode-toggle" /> Тёмная тема
+    </label>
+
+    <p class="settings-label">Мои темы</p>
+    <div id="saved-themes-list" class="saved-themes-list"></div>
+    <button id="save-theme-btn" class="secondary-btn">💾 Сохранить текущую как тему</button>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
