@@ -29,7 +29,20 @@
     </div>
     <input id="auth-username" type="text" placeholder="Имя пользователя" />
     <input id="auth-password" type="password" placeholder="Пароль" />
+    <input id="auth-email" class="hidden" type="email" placeholder="Почта (по желанию)" autocomplete="email" />
+    <input id="auth-invite" class="hidden" type="text" placeholder="Код приглашения" autocomplete="off" />
     <button id="auth-submit" class="primary-btn">Войти</button>
+
+    <div id="auth-2fa" class="hidden">
+      <p id="auth-2fa-text" class="auth-2fa-text"></p>
+      <input id="auth-2fa-code" type="text" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="Код из 6 цифр" autocomplete="one-time-code" />
+      <button id="auth-2fa-submit" class="primary-btn">Подтвердить</button>
+      <button id="auth-2fa-resend" class="secondary-btn">Отправить код ещё раз</button>
+      <button id="auth-2fa-switch" class="secondary-btn hidden"></button>
+      <button id="auth-2fa-backup" class="secondary-btn hidden">Использовать резервный код</button>
+      <button id="auth-2fa-cancel" class="secondary-btn">← Назад</button>
+    </div>
+
     <p id="auth-error" class="error"></p>
   </div>
 </div>
@@ -41,6 +54,7 @@
       <span id="me-avatar" class="avatar-circle"></span>
       <span id="me-username"></span>
       <button id="settings-btn" title="Настройки профиля">⚙️</button>
+      <button id="admin-btn" title="Админ-панель" class="hidden">🛡<span id="admin-badge" class="admin-badge hidden"></span></button>
       <button id="new-chat-btn" title="Новый чат">✚</button>
       <button id="logout-btn" title="Выйти">⎋</button>
     </div>
@@ -237,6 +251,61 @@
     <div id="profile-details" class="profile-info-list"></div>
     <button id="toggle-verify-btn" class="secondary-btn hidden"></button>
     <button id="toggle-premium-btn" class="secondary-btn hidden"></button>
+    <button id="report-user-btn" class="secondary-btn hidden">🚩 Пожаловаться на пользователя</button>
+  </div>
+</div>
+
+<!-- ЖАЛОБА -->
+<div id="report-modal" class="modal hidden">
+  <div class="modal-card report-form">
+    <h3>🚩 Пожаловаться</h3>
+    <p id="report-target" class="sec-hint"></p>
+    <select id="report-reason">
+      <option value="spam">Спам</option>
+      <option value="abuse">Оскорбления или травля</option>
+      <option value="illegal">Запрещённый контент</option>
+      <option value="fraud">Мошенничество</option>
+      <option value="other">Другое</option>
+    </select>
+    <textarea id="report-details" maxlength="500" placeholder="Что случилось? (необязательно)"></textarea>
+    <p class="sec-hint">Администратор увидит это сообщение и сможет принять меры. Остальную вашу переписку он не видит.</p>
+    <button id="report-send" class="primary-btn">Отправить жалобу</button>
+    <button id="report-cancel" class="secondary-btn">Отмена</button>
+  </div>
+</div>
+
+<!-- АДМИН-ПАНЕЛЬ -->
+<div id="admin-modal" class="page-panel hidden">
+  <div class="page-header">
+    <button id="close-admin-btn" class="page-back-btn">← Назад</button>
+  </div>
+  <div class="modal-card admin-card">
+    <h3>🛡 Админ-панель</h3>
+    <p id="admin-stats" class="sec-status"></p>
+    <div class="admin-tabs">
+      <button id="admin-tab-reports" type="button" class="admin-tab active">Жалобы</button>
+      <button id="admin-tab-users" type="button" class="admin-tab">Люди</button>
+      <button id="admin-tab-log" type="button" class="admin-tab">Журнал</button>
+    </div>
+
+    <div id="admin-reports-view">
+      <select id="admin-reports-filter">
+        <option value="open">Новые</option>
+        <option value="resolved">Решённые</option>
+        <option value="dismissed">Отклонённые</option>
+      </select>
+      <div id="admin-reports-list"></div>
+    </div>
+
+    <div id="admin-users-view" class="hidden">
+      <input id="admin-users-search" type="text" placeholder="Поиск по логину" autocomplete="off" />
+      <label class="admin-check"><input id="admin-users-banned" type="checkbox" /> только заблокированные</label>
+      <div id="admin-users-list"></div>
+    </div>
+
+    <div id="admin-log-view" class="hidden">
+      <div id="admin-log-list"></div>
+    </div>
   </div>
 </div>
 
@@ -375,6 +444,62 @@
     <p class="settings-label">Мои темы</p>
     <div id="saved-themes-list" class="saved-themes-list"></div>
     <button id="save-theme-btn" class="secondary-btn">💾 Сохранить текущую как тему</button>
+
+    <div id="security-section" class="sec-section">
+      <p class="settings-label">🔐 Безопасность: двухфакторная защита</p>
+      <p id="sec-status" class="sec-status">Загрузка…</p>
+      <input id="sec-password" type="password" placeholder="Твой пароль (для подтверждения действий)" autocomplete="current-password" />
+
+      <div id="sec-totp-block" class="sec-block">
+        <p class="sec-title">🔑 Приложение-аутентификатор (рекомендуется)</p>
+        <p class="sec-hint">Работает без интернета и без SMS, не зависит ни от каких блокировок. Подойдёт Яндекс Ключ, 2FAS, Aegis или Google Authenticator.</p>
+        <button id="sec-totp-start" type="button" class="secondary-btn">Подключить приложение</button>
+        <div id="sec-totp-setup" class="hidden">
+          <p class="sec-hint">1. Нажми «Открыть в приложении» или добавь аккаунт вручную и введи этот ключ:</p>
+          <input id="sec-totp-secret" type="text" readonly />
+          <a id="sec-totp-open" class="secondary-btn" href="#">Открыть в приложении</a>
+          <p class="sec-hint">2. Введи 6-значный код, который показало приложение:</p>
+          <input id="sec-totp-code" type="text" inputmode="numeric" maxlength="6" placeholder="Код из приложения" autocomplete="off" />
+          <button id="sec-totp-confirm" type="button" class="secondary-btn">Подтвердить</button>
+        </div>
+        <div id="sec-backup-box" class="hidden">
+          <p class="sec-title">Резервные коды</p>
+          <p class="sec-hint">Сохрани их в надёжном месте (например, сфотографируй или запиши на бумаге). Каждый подойдёт один раз, если потеряешь телефон. Больше они не покажутся.</p>
+          <pre id="sec-backup-list" class="sec-backup-list"></pre>
+          <button id="sec-backup-copy" type="button" class="secondary-btn">Скопировать</button>
+        </div>
+        <button id="sec-backup-new" type="button" class="secondary-btn hidden">Выпустить новые резервные коды</button>
+        <button id="sec-totp-disable" type="button" class="secondary-btn hidden">Отключить приложение</button>
+      </div>
+
+      <div id="sec-email-block" class="sec-block">
+        <p class="sec-title">📧 Почта</p>
+        <input id="sec-email" type="email" placeholder="Адрес почты" autocomplete="email" />
+        <button id="sec-email-send" type="button" class="secondary-btn">Отправить код на почту</button>
+        <input id="sec-email-code" type="text" inputmode="numeric" maxlength="6" placeholder="Код из письма" class="hidden" />
+        <button id="sec-email-confirm" type="button" class="secondary-btn hidden">Подтвердить почту</button>
+      </div>
+
+      <div id="sec-tg-block" class="sec-block">
+        <p class="sec-title">📱 Телефон через Telegram</p>
+        <p class="sec-hint">Код придёт в Telegram на твой номер. Бот проверит, что номер действительно твой.</p>
+        <button id="sec-tg-link" type="button" class="secondary-btn">Привязать Telegram</button>
+        <a id="sec-tg-open" class="secondary-btn hidden" target="_blank" rel="noopener" href="#">Открыть бота в Telegram</a>
+        <button id="sec-tg-unlink" type="button" class="secondary-btn hidden">Отвязать Telegram</button>
+      </div>
+
+      <div class="sec-block">
+        <p class="sec-title">Куда присылать код при входе</p>
+        <select id="sec-method">
+          <option value="off">Выключено</option>
+          <option value="totp">Приложение-аутентификатор</option>
+          <option value="email">На почту</option>
+          <option value="telegram">В Telegram (на телефон)</option>
+        </select>
+        <button id="sec-method-save" type="button" class="primary-btn">Сохранить способ</button>
+      </div>
+      <p id="sec-msg" class="sec-msg"></p>
+    </div>
   </div>
 </div>
 

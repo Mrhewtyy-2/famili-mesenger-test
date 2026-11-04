@@ -32,6 +32,8 @@ function setAuthMode(mode) {
   $('#tab-register').classList.toggle('active', mode === 'register');
   $('#auth-submit').textContent = mode === 'login' ? 'Войти' : 'Создать аккаунт';
   $('#auth-error').textContent = '';
+  $('#auth-invite').classList.toggle('hidden', mode !== 'register');
+  $('#auth-email').classList.toggle('hidden', mode !== 'register');
 }
 
 $('#auth-submit').onclick = async () => {
@@ -43,11 +45,17 @@ $('#auth-submit').onclick = async () => {
     const res = await fetch(`/api/${authMode}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(authMode === 'register'
+        ? { username, password, inviteCode: $('#auth-invite').value.trim(), email: $('#auth-email').value.trim() }
+        : { username, password }),
     });
     const data = await res.json();
     if (!res.ok) {
-      $('#auth-error').textContent = translateError(data.error);
+      $('#auth-error').textContent = authErrorText(data);
+      return;
+    }
+    if (data.needs2fa) {
+      start2faStep(data);
       return;
     }
     token = data.token;
@@ -62,9 +70,38 @@ $('#auth-submit').onclick = async () => {
 
 function translateError(err) {
   const map = {
-    invalid_input: 'Пароль должен быть от 4 символов',
+    invalid_input: 'Проверь имя и пароль',
+    weak_password: 'Пароль должен быть от 8 символов',
+    invalid_username: 'Имя: от 3 до 24 символов — буквы, цифры или _',
     username_taken: 'Это имя уже занято',
     invalid_credentials: 'Неверный логин или пароль',
+    invalid_invite: 'Неверный код приглашения',
+    registration_closed: 'Регистрация сейчас закрыта',
+    too_many_attempts: 'Слишком много попыток. Подожди 15 минут и попробуй снова',
+    rate_limited: 'Слишком много запросов, подожди немного',
+    invalid_email: 'Некорректный адрес почты',
+    wrong_code: 'Неверный код',
+    code_expired: 'Код устарел. Вернись назад и войди снова',
+    challenge_expired: 'Время вышло. Войди снова',
+    too_soon: 'Подожди минуту перед новой отправкой кода',
+    too_many_codes: 'Слишком много кодов за час. Попробуй позже',
+    send_failed: 'Не удалось отправить код. Попробуй чуть позже',
+    '2fa_unavailable': 'Двухфакторная защита сейчас недоступна. Напиши администратору',
+    wrong_password: 'Неверный пароль',
+    email_not_configured: 'Отправка писем ещё не настроена',
+    telegram_not_configured: 'Telegram-бот ещё не настроен',
+    email_not_verified: 'Сначала подтверди почту',
+    telegram_not_linked: 'Сначала привяжи Telegram',
+    method_in_use: 'Этот способ сейчас выбран. Сначала выбери другой или выключи защиту',
+    totp_already_enabled: 'Приложение-аутентификатор уже подключено',
+    totp_not_enabled: 'Сначала подключи приложение-аутентификатор',
+    totp_unavailable: 'Приложение-аутентификатор сейчас недоступно. Используй резервный код или другой способ',
+    banned: 'Аккаунт заблокирован администратором',
+    invalid_reason: 'Выбери причину жалобы',
+    self_report: 'На себя жаловаться нельзя',
+    cannot_ban_admin: 'Администратора заблокировать нельзя',
+    cannot_ban_self: 'Себя заблокировать нельзя',
+    already_handled: 'Эта жалоба уже обработана',
   };
   return map[err] || 'Что-то пошло не так';
 }
@@ -84,6 +121,13 @@ function startApp() {
   renderMyAvatar();
 
   socket = io({ auth: { token } });
+  socket.on('account:banned', handleBanned);
+  socket.on('connect_error', (err) => {
+    if (err && err.message === 'banned') handleBanned(err.data);
+    else if (err && err.message === 'invalid_token') { localStorage.clear(); location.reload(); }
+  });
+  socket.on('reports:new', () => { showToast('🚩 Новая жалоба'); refreshAdminBadge(); });
+  initAdmin();
   socket.on('message:new', onMessageNew);
   socket.on('typing', onTyping);
   socket.on('presence:update', onPresence);
@@ -139,6 +183,7 @@ async function refreshMyProfile() {
   me = user;
   localStorage.setItem('me', JSON.stringify(me));
   renderMyAvatar();
+  initAdmin();
 }
 
 function renderMyAvatar() {
@@ -147,8 +192,8 @@ function renderMyAvatar() {
 }
 
 function setAvatarEl(el, user) {
-  if (user && user.avatar) {
-    el.style.backgroundImage = `url(${user.avatar})`;
+  if (user && typeof user.avatar === 'string' && /^https:\/\/[^\s"'`<>\\()]+$/.test(user.avatar)) {
+    el.style.backgroundImage = `url("${user.avatar}")`;
     el.textContent = '';
   } else {
     el.style.backgroundImage = '';
@@ -179,7 +224,9 @@ async function api(path, options = {}) {
       Authorization: `Bearer ${token}`,
     },
   });
-  return res.json();
+  const data = await res.json();
+  if (res.status === 403 && data && data.error === 'banned') handleBanned(data);
+  return data;
 }
 
 // ---------- CHAT LIST ----------
@@ -637,7 +684,10 @@ function buildMessageRow(msg) {
 
   if (msg.type === 'location') {
     try {
-      const { lat, lng } = JSON.parse(msg.content);
+      const parsedLoc = JSON.parse(msg.content);
+      const lat = Number(parsedLoc.lat);
+      const lng = Number(parsedLoc.lng);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('bad coords');
       const d = 0.01;
       const bbox = `${lng - d}%2C${lat - d}%2C${lng + d}%2C${lat + d}`;
       bodyHtml = `
@@ -651,7 +701,7 @@ function buildMessageRow(msg) {
       bodyHtml = '📍 Геолокация';
     }
   } else if (msg.type === 'video') {
-    bodyHtml = `<div class="media-wrap"><video class="video-bubble" src="${msg.media_url}" controls playsinline></video><span class="media-time-overlay">${timeStatusInner}</span></div>`;
+    bodyHtml = `<div class="media-wrap"><video class="video-bubble" src="${safeUrl(msg.media_url)}" controls playsinline></video><span class="media-time-overlay">${timeStatusInner}</span></div>`;
     timeHtml = '';
   } else if (msg.type === 'voice') {
     bodyHtml = `
@@ -659,7 +709,7 @@ function buildMessageRow(msg) {
         <button type="button" class="voice-play-btn"></button>
         <div class="voice-progress"><div class="voice-progress-fill"></div></div>
         <span class="voice-duration">0:00</span>
-        <audio class="voice-audio-el" src="${msg.media_url}" preload="metadata"></audio>
+        <audio class="voice-audio-el" src="${safeUrl(msg.media_url)}" preload="metadata"></audio>
       </div>
       <div class="time-block">${timeStatusInner}</div>`;
     timeHtml = '';
@@ -670,7 +720,7 @@ function buildMessageRow(msg) {
     let fileMeta = { name: 'Файл', size: 0 };
     try { fileMeta = JSON.parse(msg.content); } catch { /* оставляем значения по умолчанию */ }
     bodyHtml = `
-      <div class="file-bubble" data-file-url="${msg.media_url}" data-file-name="${escapeHtml(fileMeta.name || 'file')}">
+      <div class="file-bubble" data-file-url="${safeUrl(msg.media_url)}" data-file-name="${escapeHtml(fileMeta.name || 'file')}">
         <span class="file-bubble-icon">${fileIconFor(fileMeta.name || '')}</span>
         <span class="file-bubble-info">
           <span class="file-bubble-name">${escapeHtml(fileMeta.name || 'Файл')}</span>
@@ -682,7 +732,7 @@ function buildMessageRow(msg) {
   } else {
     if (msg.content) bodyHtml += renderTextWithMentions(msg.content);
     if (msg.media_url) {
-      bodyHtml += `<div class="media-wrap"><img src="${msg.media_url}" /><span class="media-time-overlay">${timeStatusInner}</span></div>`;
+      bodyHtml += `<div class="media-wrap"><img src="${safeUrl(msg.media_url)}" /><span class="media-time-overlay">${timeStatusInner}</span></div>`;
       timeHtml = msg.content ? timeHtml : '';
     }
   }
@@ -719,7 +769,7 @@ function renderReactionsRow(msg) {
   if (!msg.reactions || msg.reactions.length === 0) return '';
   return msg.reactions.map((r) => {
     const mine = r.userIds && r.userIds.includes(me.id);
-    return `<span class="reaction-pill${mine ? ' mine' : ''}" data-emoji="${r.emoji}">${r.emoji} ${r.count}</span>`;
+    return `<span class="reaction-pill${mine ? ' mine' : ''}" data-emoji="${escapeHtml(r.emoji)}">${escapeHtml(r.emoji)} ${Number(r.count) || 0}</span>`;
   }).join('');
 }
 
@@ -847,6 +897,13 @@ $('#chat-header-info').onclick = async () => {
     premiumBtn.classList.add('hidden');
   }
 
+  const reportBtn = $('#report-user-btn');
+  reportBtn.classList.toggle('hidden', user.id === me.id);
+  reportBtn.onclick = () => {
+    $('#profile-modal').classList.add('hidden');
+    openReportModal({ userId: user.id, label: `на пользователя @${user.username}` });
+  };
+
   $('#profile-modal').classList.remove('hidden');
 };
 $('#close-profile-btn').onclick = () => $('#profile-modal').classList.add('hidden');
@@ -886,7 +943,8 @@ function renderGroupMembers(members) {
     if (!isMe) {
       row.querySelector('.remove-member-btn').onclick = async () => {
         if (!confirm(`Убрать ${m.display_name || m.username} из группы?`)) return;
-        await api(`/api/chats/${activeChatId}/members/${m.id}`, { method: 'DELETE' });
+        const rmRes = await api(`/api/chats/${activeChatId}/members/${m.id}`, { method: 'DELETE' });
+        if (rmRes.error) showToast('Убирать участников может только создатель группы');
         openGroupInfo();
       };
     }
@@ -989,7 +1047,11 @@ $('#clear-history-btn').onclick = async () => {
   if (!activeChatId) return;
   $('#chat-menu').classList.add('hidden');
   if (!confirm('Удалить всю переписку в этом чате? Это затронет обе стороны и необратимо.')) return;
-  await api(`/api/chats/${activeChatId}/messages`, { method: 'DELETE' });
+  const clearRes = await api(`/api/chats/${activeChatId}/messages`, { method: 'DELETE' });
+  if (clearRes.error) {
+    showToast(clearRes.error === 'owner_only' ? 'Это может сделать только создатель группы' : 'Не получилось очистить историю');
+    return;
+  }
   $('#messages').innerHTML = '';
 };
 
@@ -998,7 +1060,11 @@ $('#delete-chat-btn').onclick = async () => {
   $('#chat-menu').classList.add('hidden');
   if (!confirm('Удалить этот чат целиком? Он пропадёт из списка у обеих сторон, история сотрётся безвозвратно.')) return;
   const chatId = activeChatId;
-  await api(`/api/chats/${chatId}`, { method: 'DELETE' });
+  const delRes = await api(`/api/chats/${chatId}`, { method: 'DELETE' });
+  if (delRes.error) {
+    showToast(delRes.error === 'owner_only' ? 'Удалить группу может только её создатель. Можно выйти из неё' : 'Не получилось удалить чат');
+    return;
+  }
   closeChatAndGoBack(chatId);
   showToast('Чат удалён');
 };
@@ -1594,6 +1660,9 @@ function openMessageMenu(messageId) {
       if (confirm('Удалить это сообщение?')) await api(`/api/messages/${messageId}`, { method: 'DELETE' });
     } });
   }
+  if (!isOut && msg.type !== 'missed_call') {
+    actions.push({ label: '🚩 Пожаловаться', run: () => openReportModal({ messageId, label: 'на это сообщение' }) });
+  }
   actions.push({ label: '☑️ Выделить', run: () => enterSelectionMode(messageId) });
   const actionsBox = $('#message-menu-actions');
   actionsBox.innerHTML = '';
@@ -2072,9 +2141,14 @@ document.addEventListener('click', (e) => {
 });
 
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '`': '&#96;' };
+  return String(str ?? '').replace(/[&<>"'`]/g, (c) => map[c]);
+}
+
+// Ссылки на медиа вставляем в страницу только если это обычный https-адрес без опасных символов
+function safeUrl(u) {
+  if (typeof u !== 'string') return '';
+  return /^https:\/\/[^\s"'`<>\\]+$/.test(u) ? escapeHtml(u) : '';
 }
 
 function renderTextWithMentions(text) {
@@ -2270,6 +2344,7 @@ $('#settings-btn').onclick = () => {
   });
   $('#dark-mode-toggle').checked = document.body.classList.contains('dark-theme');
   renderSavedThemes();
+  loadSecurityStatus();
 
   const selfVerifyBtn = $('#self-verify-btn');
   if (me.is_admin) {
@@ -2309,7 +2384,12 @@ $('#settings-btn').onclick = () => {
 
   $('#settings-modal').classList.remove('hidden');
 };
-$('#close-settings-btn').onclick = () => $('#settings-modal').classList.add('hidden');
+$('#close-settings-btn').onclick = () => {
+  $('#settings-modal').classList.add('hidden');
+  $('#sec-backup-list').textContent = '';
+  $('#sec-backup-box').classList.add('hidden');
+  $('#sec-password').value = '';
+};
 
 $('#save-name-btn').onclick = async () => {
   const displayName = $('#display-name-input').value.trim();
@@ -2440,4 +2520,652 @@ function shadeColor(hex, percent) {
   g = Math.min(255, Math.max(0, g));
   b = Math.min(255, Math.max(0, b));
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`;
+}
+
+
+// ========== ДВУХФАКТОРНАЯ ЗАЩИТА: ВХОД ==========
+let pending2fa = null; // { challengeToken, method, methods, backup, kind: 'code' | 'backup', hint }
+
+function showAuthStep(step) {
+  const is2fa = step === '2fa';
+  ['.auth-card .tabs', '#auth-username', '#auth-password', '#auth-submit'].forEach((sel) => {
+    $(sel).classList.toggle('hidden', is2fa);
+  });
+  $('#auth-2fa').classList.toggle('hidden', !is2fa);
+  if (is2fa) {
+    $('#auth-email').classList.add('hidden');
+    $('#auth-invite').classList.add('hidden');
+  } else {
+    setAuthMode(authMode);
+  }
+  $('#auth-error').textContent = '';
+}
+
+function describe2fa(method, hint) {
+  if (method === 'totp') return 'Открой приложение-аутентификатор и введи 6-значный код для «Mío».';
+  if (method === 'email') return `Мы отправили код на почту ${hint}. Введи его ниже.`;
+  return `Мы отправили код в Telegram (${hint}). Введи его ниже.`;
+}
+
+const METHOD_SWITCH_LABELS = {
+  totp: 'Ввести код из приложения',
+  email: 'Получить код на почту',
+  telegram: 'Получить код в Telegram',
+};
+
+function render2faStep() {
+  const p = pending2fa;
+  const isBackup = p.kind === 'backup';
+  $('#auth-2fa-text').textContent = isBackup
+    ? 'Введи один из резервных кодов (вида a1b2c-3d4e5). Каждый работает только один раз.'
+    : describe2fa(p.method, p.hint);
+
+  const input = $('#auth-2fa-code');
+  input.value = '';
+  input.maxLength = isBackup ? 11 : 6;
+  input.placeholder = isBackup ? 'Резервный код' : 'Код из 6 цифр';
+  input.inputMode = isBackup ? 'text' : 'numeric';
+
+  $('#auth-2fa-resend').classList.toggle('hidden', p.method === 'totp' || isBackup);
+
+  const bk = $('#auth-2fa-backup');
+  bk.classList.toggle('hidden', !p.backup);
+  bk.textContent = isBackup ? '← Вернуться к обычному коду' : 'Использовать резервный код';
+
+  const sw = $('#auth-2fa-switch');
+  const idx = p.methods.indexOf(p.method);
+  const next = p.methods.length > 1 ? p.methods[(idx + 1) % p.methods.length] : null;
+  sw.classList.toggle('hidden', !next || next === p.method || isBackup);
+  if (next) {
+    sw.dataset.method = next;
+    sw.textContent = METHOD_SWITCH_LABELS[next] || 'Другой способ';
+  }
+}
+
+function start2faStep(data) {
+  pending2fa = {
+    challengeToken: data.challengeToken,
+    method: data.method,
+    methods: data.methods || [data.method],
+    backup: !!data.backup,
+    kind: 'code',
+    hint: data.hint || '',
+  };
+  showAuthStep('2fa');
+  render2faStep();
+  $('#auth-2fa-code').focus();
+}
+
+async function post2fa(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* пустой ответ */ }
+  return { ok: res.ok, data };
+}
+
+$('#auth-2fa-submit').onclick = async () => {
+  if (!pending2fa) return;
+  const code = $('#auth-2fa-code').value.trim();
+  const isBackup = pending2fa.kind === 'backup';
+  if (!isBackup && !/^\d{6}$/.test(code)) {
+    $('#auth-error').textContent = 'Введи 6 цифр';
+    return;
+  }
+  if (isBackup && code.replace(/[^a-fA-F0-9]/g, '').length !== 10) {
+    $('#auth-error').textContent = 'Резервный код состоит из 10 символов: цифры и буквы a–f';
+    return;
+  }
+  try {
+    const r = await post2fa('/api/login/2fa', {
+      challengeToken: pending2fa.challengeToken,
+      code,
+      method: isBackup ? 'backup' : pending2fa.method,
+    });
+    if (!r.ok) {
+      if (r.data.error === 'challenge_expired' || r.data.error === 'too_many_attempts') {
+        pending2fa = null;
+        showAuthStep('main');
+      }
+      $('#auth-error').textContent = translateError(r.data.error);
+      return;
+    }
+    token = r.data.token;
+    me = r.data.user;
+    localStorage.setItem('token', token);
+    localStorage.setItem('me', JSON.stringify(me));
+    pending2fa = null;
+    startApp();
+  } catch (e) {
+    $('#auth-error').textContent = 'Ошибка соединения с сервером';
+  }
+};
+$('#auth-2fa-code').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#auth-2fa-submit').click();
+});
+
+async function resend2fa(method) {
+  if (!pending2fa) return;
+  try {
+    const r = await post2fa('/api/login/2fa/resend', { challengeToken: pending2fa.challengeToken, method });
+    if (!r.ok) {
+      $('#auth-error').textContent = translateError(r.data.error);
+      return;
+    }
+    pending2fa.method = r.data.method;
+    pending2fa.hint = r.data.hint || '';
+    pending2fa.kind = 'code';
+    render2faStep();
+    $('#auth-error').textContent = '';
+  } catch (e) {
+    $('#auth-error').textContent = 'Ошибка соединения с сервером';
+  }
+}
+$('#auth-2fa-resend').onclick = () => resend2fa(pending2fa && pending2fa.method);
+$('#auth-2fa-switch').onclick = () => resend2fa($('#auth-2fa-switch').dataset.method);
+$('#auth-2fa-backup').onclick = () => {
+  if (!pending2fa) return;
+  pending2fa.kind = pending2fa.kind === 'backup' ? 'code' : 'backup';
+  render2faStep();
+  $('#auth-error').textContent = '';
+  $('#auth-2fa-code').focus();
+};
+$('#auth-2fa-cancel').onclick = () => {
+  pending2fa = null;
+  showAuthStep('main');
+};
+
+// ========== ДВУХФАКТОРНАЯ ЗАЩИТА: НАСТРОЙКИ ==========
+let secState = null;
+let secPollTimer = null;
+
+function secMsg(text, isError = false) {
+  const el = $('#sec-msg');
+  el.textContent = text;
+  el.className = 'sec-msg' + (isError ? ' error' : '');
+}
+
+async function secPost(path, body) {
+  const res = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: JSON.stringify(body || {}),
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* пустой ответ */ }
+  return { ok: res.ok, data };
+}
+
+async function loadSecurityStatus() {
+  try {
+    const res = await fetch('/api/2fa/status', { headers: { Authorization: `Bearer ${token}` } });
+    const s = await res.json();
+    if (!res.ok) {
+      $('#sec-status').textContent = 'Не удалось загрузить настройки защиты';
+      return;
+    }
+    secState = s;
+    const lines = [];
+    lines.push(
+      s.method === 'totp' ? '✅ Защита включена: код из приложения-аутентификатора'
+        : s.method === 'email' ? '✅ Защита включена: код приходит на почту'
+        : s.method === 'telegram' ? '✅ Защита включена: код приходит в Telegram'
+        : '⚠️ Защита выключена: вход только по паролю'
+    );
+    lines.push(s.totpEnabled ? `Приложение-аутентификатор: подключено ✔ (резервных кодов: ${s.backupLeft})` : 'Приложение-аутентификатор: не подключено');
+    lines.push(s.emailVerified ? `Почта: ${s.email} ✔` : s.email ? `Почта: ${s.email} (не подтверждена)` : 'Почта: не указана');
+    if (s.available.telegram) lines.push(s.telegramLinked ? `Telegram: ${s.telegramPhone || 'привязан'} ✔` : 'Telegram: не привязан');
+    $('#sec-status').textContent = lines.join('\n');
+
+    $('#sec-email-block').classList.toggle('hidden', !s.available.email);
+    $('#sec-tg-block').classList.toggle('hidden', !s.available.telegram);
+    $('#sec-tg-link').classList.toggle('hidden', s.telegramLinked);
+    $('#sec-tg-unlink').classList.toggle('hidden', !s.telegramLinked);
+    if (s.telegramLinked) $('#sec-tg-open').classList.add('hidden');
+
+    $('#sec-totp-start').classList.toggle('hidden', s.totpEnabled);
+    if (s.totpEnabled) $('#sec-totp-setup').classList.add('hidden');
+    $('#sec-backup-new').classList.toggle('hidden', !s.totpEnabled);
+    $('#sec-totp-disable').classList.toggle('hidden', !s.totpEnabled);
+
+    const sel = $('#sec-method');
+    Array.from(sel.options).forEach((o) => {
+      o.disabled = (o.value === 'totp' && !s.totpEnabled)
+        || (o.value === 'email' && !s.emailVerified)
+        || (o.value === 'telegram' && !s.telegramLinked);
+    });
+    sel.value = s.method || 'off';
+  } catch (e) {
+    $('#sec-status').textContent = 'Нет связи с сервером';
+  }
+}
+
+function secPassword() {
+  const p = $('#sec-password').value;
+  if (!p) secMsg('Сначала введи свой пароль в поле выше', true);
+  return p;
+}
+
+$('#sec-email-send').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  const email = $('#sec-email').value.trim();
+  if (!email) return secMsg('Введи адрес почты', true);
+  const r = await secPost('/api/2fa/email/start', { password, email });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-email-code').classList.remove('hidden');
+  $('#sec-email-confirm').classList.remove('hidden');
+  secMsg('Код отправлен. Проверь входящие и папку «Спам».');
+};
+
+$('#sec-email-confirm').onclick = async () => {
+  const code = $('#sec-email-code').value.trim();
+  const r = await secPost('/api/2fa/email/confirm', { code });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-email-code').value = '';
+  $('#sec-email-code').classList.add('hidden');
+  $('#sec-email-confirm').classList.add('hidden');
+  secMsg('Почта подтверждена ✔ Теперь выбери способ ниже и сохрани.');
+  await loadSecurityStatus();
+};
+
+function startSecPolling() {
+  if (secPollTimer) clearInterval(secPollTimer);
+  let n = 0;
+  secPollTimer = setInterval(async () => {
+    n++;
+    await loadSecurityStatus();
+    if ((secState && secState.telegramLinked) || n > 40) {
+      clearInterval(secPollTimer);
+      secPollTimer = null;
+      if (secState && secState.telegramLinked) secMsg('Telegram привязан ✔ Теперь выбери способ ниже и сохрани.');
+    }
+  }, 3000);
+}
+
+$('#sec-tg-link').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  const r = await secPost('/api/2fa/telegram/link', { password });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  const a = $('#sec-tg-open');
+  a.href = r.data.url;
+  a.classList.remove('hidden');
+  secMsg('Нажми «Открыть бота», потом Start и кнопку «Поделиться номером». Затем вернись сюда.');
+  startSecPolling();
+};
+
+$('#sec-tg-unlink').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  if (!confirm('Отвязать Telegram?')) return;
+  const r = await secPost('/api/2fa/telegram/unlink', { password });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  secMsg('Telegram отвязан');
+  await loadSecurityStatus();
+};
+
+$('#sec-method-save').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  const value = $('#sec-method').value;
+  const r = await secPost('/api/2fa/method', { password, method: value === 'off' ? null : value });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-password').value = '';
+  secMsg(value === 'off' ? 'Двухфакторная защита выключена' : 'Готово! Теперь при входе будет приходить код.');
+  await loadSecurityStatus();
+};
+
+
+// ========== ПРИЛОЖЕНИЕ-АУТЕНТИФИКАТОР (TOTP): НАСТРОЙКИ ==========
+function showBackupCodes(codes) {
+  $('#sec-backup-list').textContent = codes.join('\n');
+  $('#sec-backup-box').classList.remove('hidden');
+}
+
+$('#sec-totp-start').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  const r = await secPost('/api/2fa/totp/start', { password });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-totp-secret').value = r.data.secret;
+  $('#sec-totp-open').href = r.data.uri;
+  $('#sec-totp-code').value = '';
+  $('#sec-totp-setup').classList.remove('hidden');
+  secMsg('Добавь ключ в приложение-аутентификатор, потом введи код из него ниже.');
+};
+
+$('#sec-totp-confirm').onclick = async () => {
+  const code = $('#sec-totp-code').value.trim();
+  if (!/^\d{6}$/.test(code)) return secMsg('Введи 6 цифр из приложения', true);
+  const r = await secPost('/api/2fa/totp/confirm', { code });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-totp-setup').classList.add('hidden');
+  $('#sec-totp-secret').value = '';
+  $('#sec-totp-code').value = '';
+  showBackupCodes(r.data.backupCodes);
+  secMsg('Приложение подключено ✔ Обязательно сохрани резервные коды ниже!');
+  await loadSecurityStatus();
+};
+
+$('#sec-backup-copy').onclick = async () => {
+  try {
+    await navigator.clipboard.writeText($('#sec-backup-list').textContent);
+    showToast('Скопировано');
+  } catch (e) {
+    secMsg('Не получилось скопировать. Выдели коды пальцем и скопируй вручную', true);
+  }
+};
+
+$('#sec-backup-new').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  if (!confirm('Выпустить новые коды? Старые перестанут работать.')) return;
+  const r = await secPost('/api/2fa/totp/backup-new', { password });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  showBackupCodes(r.data.backupCodes);
+  secMsg('Новые резервные коды выпущены. Сохрани их!');
+  await loadSecurityStatus();
+};
+
+$('#sec-totp-disable').onclick = async () => {
+  const password = secPassword();
+  if (!password) return;
+  if (!confirm('Отключить приложение-аутентификатор?')) return;
+  const r = await secPost('/api/2fa/totp/disable', { password });
+  if (!r.ok) return secMsg(translateError(r.data.error), true);
+  $('#sec-backup-box').classList.add('hidden');
+  $('#sec-backup-list').textContent = '';
+  secMsg('Приложение-аутентификатор отключено');
+  await loadSecurityStatus();
+};
+
+
+// ========== БАН: ВЫХОД ИЗ АККАУНТА ==========
+let bannedShown = false;
+function handleBanned(info) {
+  if (bannedShown) return;
+  bannedShown = true;
+  const reason = info && info.reason ? `\nПричина: ${info.reason}` : '';
+  const until = info && info.until ? `\nДо: ${new Date(info.until).toLocaleString('ru-RU')}` : '';
+  localStorage.clear();
+  alert(`Ваш аккаунт заблокирован.${reason}${until}`);
+  location.reload();
+}
+function authErrorText(data) {
+  const base = translateError(data.error);
+  return data.error === 'banned' && data.reason ? `${base}. Причина: ${data.reason}` : base;
+}
+
+// ========== ЖАЛОБЫ ==========
+let reportCtx = null; // { messageId? | userId?, label }
+function openReportModal(ctx) {
+  reportCtx = ctx;
+  $('#report-target').textContent = `Жалоба ${ctx.label}`;
+  $('#report-reason').value = 'spam';
+  $('#report-details').value = '';
+  $('#report-modal').classList.remove('hidden');
+}
+function closeReportModal() {
+  $('#report-modal').classList.add('hidden');
+  reportCtx = null;
+}
+$('#report-cancel').onclick = closeReportModal;
+$('#report-modal').addEventListener('click', (e) => { if (e.target.id === 'report-modal') closeReportModal(); });
+$('#report-send').onclick = async () => {
+  if (!reportCtx) return;
+  const body = { reason: $('#report-reason').value, details: $('#report-details').value.trim() };
+  if (reportCtx.messageId) body.messageId = reportCtx.messageId;
+  else body.userId = reportCtx.userId;
+  const data = await api('/api/reports', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (data.error) {
+    showToast(translateError(data.error));
+    return;
+  }
+  closeReportModal();
+  showToast('Жалоба отправлена. Спасибо!');
+};
+
+// ========== АДМИН-ПАНЕЛЬ ==========
+const ADMIN_RESOLUTION_LABELS = { dismiss: 'Отклонена', resolve: 'Закрыта без бана', ban: 'Пользователь заблокирован' };
+const ADMIN_ACTION_LABELS = {
+  ban: '🔨 Бан',
+  unban: '♻️ Разбан',
+  delete_message: '🗑 Удалено сообщение',
+  dismiss_report: 'Жалоба отклонена',
+  resolve_report: 'Жалоба закрыта',
+};
+
+function mk(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+function fmtTs(ts) {
+  return ts ? new Date(ts).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
+}
+function isHttpsUrl(u) {
+  return typeof u === 'string' && /^https:\/\/[^\s"'`<>\\]+$/.test(u);
+}
+
+async function adminCall(path, method = 'GET', body) {
+  const res = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* пустой ответ */ }
+  if (res.status === 403 && data.error === 'banned') handleBanned(data);
+  return { ok: res.ok, data };
+}
+
+function initAdmin() {
+  const isAdmin = !!(me && me.is_admin);
+  $('#admin-btn').classList.toggle('hidden', !isAdmin);
+  if (isAdmin) refreshAdminBadge();
+}
+
+async function refreshAdminBadge() {
+  if (!me || !me.is_admin) return;
+  const r = await adminCall('/api/admin/stats');
+  if (!r.ok) return;
+  const badge = $('#admin-badge');
+  badge.textContent = r.data.openReports;
+  badge.classList.toggle('hidden', !r.data.openReports);
+  $('#admin-stats').textContent = `Людей: ${r.data.users} · Заблокировано: ${r.data.banned} · Новых жалоб: ${r.data.openReports}`;
+}
+
+function showAdminTab(name) {
+  ['reports', 'users', 'log'].forEach((t) => {
+    $(`#admin-${t}-view`).classList.toggle('hidden', t !== name);
+    $(`#admin-tab-${t}`).classList.toggle('active', t === name);
+  });
+  if (name === 'reports') loadAdminReports();
+  else if (name === 'users') loadAdminUsers();
+  else loadAdminLog();
+}
+
+$('#admin-btn').onclick = () => {
+  $('#admin-modal').classList.remove('hidden');
+  refreshAdminBadge();
+  showAdminTab('reports');
+};
+$('#close-admin-btn').onclick = () => $('#admin-modal').classList.add('hidden');
+$('#admin-tab-reports').onclick = () => showAdminTab('reports');
+$('#admin-tab-users').onclick = () => showAdminTab('users');
+$('#admin-tab-log').onclick = () => showAdminTab('log');
+$('#admin-reports-filter').onchange = loadAdminReports;
+
+// --- жалобы ---
+async function loadAdminReports() {
+  const list = $('#admin-reports-list');
+  list.textContent = 'Загрузка…';
+  const r = await adminCall(`/api/admin/reports?status=${encodeURIComponent($('#admin-reports-filter').value)}`);
+  if (!r.ok) { list.textContent = 'Не удалось загрузить'; return; }
+  list.textContent = '';
+  if (!r.data.length) { list.appendChild(mk('p', 'admin-muted', 'Здесь пока пусто')); return; }
+  r.data.forEach((rep) => list.appendChild(renderAdminReport(rep)));
+}
+
+function renderAdminReport(rep) {
+  const card = mk('div', 'admin-item');
+  const head = mk('div', 'admin-item-head');
+  head.appendChild(mk('strong', '', `🚩 ${rep.reasonLabel}`));
+  head.appendChild(mk('span', 'admin-muted', fmtTs(rep.createdAt)));
+  card.appendChild(head);
+
+  const who = `@${rep.reporterName} → @${rep.targetName}${rep.targetDisplay ? ` (${rep.targetDisplay})` : ''}`;
+  card.appendChild(mk('div', 'admin-line', who));
+  const meta = [`Жалоб на этого человека: ${rep.targetTotal}`];
+  if (rep.targetBanned) meta.push('🔨 уже заблокирован');
+  if (rep.targetIsAdmin) meta.push('админ');
+  card.appendChild(mk('div', 'admin-muted', meta.join(' · ')));
+
+  if (rep.snapshot) {
+    card.appendChild(mk('div', 'admin-quote', rep.snapshot.text || ''));
+    if (isHttpsUrl(rep.snapshot.mediaUrl)) {
+      const a = mk('a', 'admin-link', 'Открыть вложение');
+      a.href = rep.snapshot.mediaUrl;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      card.appendChild(a);
+    }
+  }
+  if (rep.details) card.appendChild(mk('div', 'admin-line', `Комментарий: ${rep.details}`));
+
+  if (rep.status === 'open') {
+    const actions = mk('div', 'admin-actions');
+    const btn = (label, fn) => {
+      const b = mk('button', 'secondary-btn', label);
+      b.type = 'button';
+      b.onclick = fn;
+      actions.appendChild(b);
+    };
+    btn('Отклонить', () => resolveAdminReport(rep, 'dismiss'));
+    btn('Закрыть без бана', () => resolveAdminReport(rep, 'resolve'));
+    if (rep.messageId) {
+      btn('🗑 Удалить сообщение', () => {
+        if (confirm('Удалить это сообщение у всех?')) resolveAdminReport(rep, 'resolve', { deleteMessage: true });
+      });
+    }
+    if (!rep.targetIsAdmin) {
+      btn('🔨 Бан на 7 дней', () => banFromReport(rep, 7));
+      btn('🔨 Бан навсегда', () => banFromReport(rep, null));
+    }
+    card.appendChild(actions);
+  } else {
+    const who2 = rep.handlerName ? ` · @${rep.handlerName}` : '';
+    card.appendChild(mk('div', 'admin-muted', `${ADMIN_RESOLUTION_LABELS[rep.resolution] || rep.status}${who2} · ${fmtTs(rep.handledAt)}`));
+  }
+  return card;
+}
+
+async function resolveAdminReport(rep, action, extra = {}) {
+  const r = await adminCall(`/api/admin/reports/${rep.id}/resolve`, 'POST', { action, ...extra });
+  if (!r.ok) { showToast(translateError(r.data.error)); return; }
+  showToast('Готово');
+  loadAdminReports();
+  refreshAdminBadge();
+}
+
+async function banFromReport(rep, days) {
+  const reason = prompt(`Причина блокировки @${rep.targetName} (её увидит сам пользователь):`, rep.reasonLabel);
+  if (reason === null) return;
+  const deleteMessage = rep.messageId ? confirm('Удалить также само сообщение?') : false;
+  await resolveAdminReport(rep, 'ban', { reason, days, deleteMessage });
+}
+
+// --- люди ---
+let adminUsersTimer = null;
+$('#admin-users-search').oninput = () => {
+  clearTimeout(adminUsersTimer);
+  adminUsersTimer = setTimeout(loadAdminUsers, 300);
+};
+$('#admin-users-banned').onchange = loadAdminUsers;
+
+async function loadAdminUsers() {
+  const list = $('#admin-users-list');
+  list.textContent = 'Загрузка…';
+  const q = encodeURIComponent($('#admin-users-search').value.trim());
+  const banned = $('#admin-users-banned').checked ? 1 : 0;
+  const r = await adminCall(`/api/admin/users?search=${q}&banned=${banned}`);
+  if (!r.ok) { list.textContent = 'Не удалось загрузить'; return; }
+  list.textContent = '';
+  if (!r.data.length) { list.appendChild(mk('p', 'admin-muted', 'Никого не найдено')); return; }
+
+  r.data.forEach((u) => {
+    const card = mk('div', 'admin-item');
+    const head = mk('div', 'admin-item-head');
+    head.appendChild(mk('strong', '', `@${u.username}${u.displayName ? ` (${u.displayName})` : ''}`));
+    head.appendChild(mk('span', 'admin-muted', u.isAdmin ? 'админ' : ''));
+    card.appendChild(head);
+    const meta = [`Регистрация: ${fmtTs(u.createdAt) || '—'}`, `Жалоб: ${u.reportsTotal}`];
+    if (u.lastSeen) meta.push(`Был(а): ${fmtTs(u.lastSeen)}`);
+    card.appendChild(mk('div', 'admin-muted', meta.join(' · ')));
+    if (u.banned) {
+      const until = u.bannedUntil ? `до ${fmtTs(u.bannedUntil)}` : 'навсегда';
+      card.appendChild(mk('div', 'admin-line', `🔨 Заблокирован ${until}${u.banReason ? `: ${u.banReason}` : ''}`));
+    }
+    if (!u.isAdmin) {
+      const actions = mk('div', 'admin-actions');
+      const b = mk('button', 'secondary-btn', u.banned ? '♻️ Разблокировать' : '🔨 Заблокировать');
+      b.type = 'button';
+      b.onclick = () => (u.banned ? adminUnban(u) : adminBan(u));
+      actions.appendChild(b);
+      card.appendChild(actions);
+    }
+    list.appendChild(card);
+  });
+}
+
+async function adminBan(u) {
+  const reason = prompt(`Причина блокировки @${u.username} (её увидит пользователь):`, '');
+  if (reason === null) return;
+  const d = prompt('На сколько дней? (оставь пустым, чтобы заблокировать навсегда)', '');
+  if (d === null) return;
+  const days = d.trim() ? Number(d) : null;
+  const r = await adminCall(`/api/admin/users/${u.id}/ban`, 'POST', { reason, days });
+  if (!r.ok) { showToast(translateError(r.data.error)); return; }
+  showToast('Пользователь заблокирован');
+  loadAdminUsers();
+  refreshAdminBadge();
+}
+
+async function adminUnban(u) {
+  if (!confirm(`Разблокировать @${u.username}?`)) return;
+  const r = await adminCall(`/api/admin/users/${u.id}/unban`, 'POST');
+  if (!r.ok) { showToast(translateError(r.data.error)); return; }
+  showToast('Разблокирован');
+  loadAdminUsers();
+  refreshAdminBadge();
+}
+
+// --- журнал ---
+async function loadAdminLog() {
+  const list = $('#admin-log-list');
+  list.textContent = 'Загрузка…';
+  const r = await adminCall('/api/admin/log');
+  if (!r.ok) { list.textContent = 'Не удалось загрузить'; return; }
+  list.textContent = '';
+  if (!r.data.length) { list.appendChild(mk('p', 'admin-muted', 'Действий пока не было')); return; }
+  r.data.forEach((e) => {
+    const card = mk('div', 'admin-item');
+    const head = mk('div', 'admin-item-head');
+    head.appendChild(mk('strong', '', ADMIN_ACTION_LABELS[e.action] || e.action));
+    head.appendChild(mk('span', 'admin-muted', fmtTs(e.createdAt)));
+    card.appendChild(head);
+    const line = `${e.adminName ? '@' + e.adminName : ''}${e.targetName ? ` → @${e.targetName}` : ''}`;
+    if (line) card.appendChild(mk('div', 'admin-line', line));
+    if (e.details) card.appendChild(mk('div', 'admin-muted', e.details));
+    list.appendChild(card);
+  });
 }

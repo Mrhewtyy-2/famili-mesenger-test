@@ -709,3 +709,59 @@ body.dark-theme input[type="password"] {
   background: #232327; border-color: var(--border);
 }
 body.dark-theme input::placeholder { color: var(--text-muted); }
+
+
+/* ---- ДВУХФАКТОРНАЯ ЗАЩИТА ---- */
+.auth-2fa-text { font-size: 14px; text-align: center; margin-bottom: 12px; color: var(--text-muted); }
+#auth-2fa-code { text-align: center; letter-spacing: 6px; font-size: 20px; }
+.sec-section { margin-top: 8px; }
+.sec-status { white-space: pre-line; font-size: 13px; line-height: 1.5; margin-bottom: 8px; }
+.sec-block { margin: 10px 0; padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.sec-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; }
+.sec-hint { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+.sec-section input, .sec-section select {
+  width: 100%; padding: 9px 10px; margin: 4px 0; border: 1px solid var(--border);
+  border-radius: 8px; font-size: 14px; background: transparent; color: inherit;
+}
+.sec-msg { font-size: 13px; min-height: 18px; margin-top: 8px; }
+.sec-msg.error { text-align: left; }
+a.secondary-btn { display: block; text-align: center; text-decoration: none; color: inherit; box-sizing: border-box; }
+
+.sec-backup-list {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px;
+  background: rgba(127, 127, 127, 0.14); padding: 10px; border-radius: 8px;
+  white-space: pre; user-select: all; -webkit-user-select: all; margin: 6px 0;
+}
+
+
+/* ---- ЖАЛОБЫ И АДМИН-ПАНЕЛЬ ---- */
+.report-form select, .report-form textarea, .admin-card select {
+  width: 100%; padding: 10px; margin: 8px 0; border: 1px solid var(--border); border-radius: 8px;
+  font: inherit; background: transparent; color: inherit; box-sizing: border-box;
+}
+.report-form textarea { min-height: 80px; resize: vertical; }
+#admin-btn { position: relative; }
+.admin-badge {
+  position: absolute; top: -4px; right: -6px; min-width: 16px; height: 16px; padding: 0 4px;
+  border-radius: 8px; background: #e53935; color: #fff; font-size: 10px; line-height: 16px;
+  text-align: center; box-sizing: border-box;
+}
+.admin-tabs { display: flex; gap: 6px; margin: 10px 0; }
+.admin-tab {
+  flex: 1; padding: 8px 4px; border: 1px solid var(--border); border-radius: 8px;
+  background: transparent; color: inherit; font-size: 14px; cursor: pointer;
+}
+.admin-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.admin-item { border: 1px solid var(--border); border-radius: 10px; padding: 10px; margin: 8px 0; text-align: left; }
+.admin-item-head { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.admin-line { font-size: 14px; margin: 3px 0; word-break: break-word; }
+.admin-muted { font-size: 12px; color: var(--text-muted); margin: 3px 0; }
+.admin-quote {
+  white-space: pre-wrap; word-break: break-word; background: rgba(127, 127, 127, 0.14);
+  padding: 8px; border-radius: 8px; margin: 6px 0; font-size: 14px;
+}
+.admin-link { display: inline-block; font-size: 13px; color: var(--accent); margin: 2px 0 4px; }
+.admin-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.admin-actions button { flex: 1 1 auto; }
+.admin-check { display: flex; align-items: center; font-size: 14px; margin: 6px 0; }
+.admin-card input[type=checkbox] { width: auto; margin: 0 6px 0 0; padding: 0; }
