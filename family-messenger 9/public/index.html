@@ -40,6 +40,13 @@
     <symbol id="i-star" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></symbol>
     <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></symbol>
     <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+    <symbol id="i-key" viewBox="0 0 24 24"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/></symbol>
+    <symbol id="i-droplet" viewBox="0 0 24 24"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
   </defs>
 </svg>
 
@@ -87,6 +94,11 @@
       </label>
     </div>
     <div id="stories-bar" class="stories-bar"></div>
+    <div id="notif-banner" class="notif-banner hidden">
+      <span class="nb-text">🔔 Включить уведомления о новых сообщениях?</span>
+      <button id="notif-banner-yes" type="button" class="nb-yes">Включить</button>
+      <button id="notif-banner-no" type="button" class="nb-no" title="Не сейчас">✕</button>
+    </div>
     <div id="chat-list" class="chat-list"></div>
     <button id="new-chat-btn" class="fab" title="Новый чат"><svg class="ic"><use href="#i-pencil"/></svg></button>
   </aside>
@@ -470,12 +482,42 @@
   </div>
 </div>
 
-<!-- НАСТРОЙКИ ПРОФИЛЯ -->
-<div id="settings-modal" class="page-panel hidden">
-  <div class="page-header">
-    <button id="close-settings-btn" class="page-back-btn">← Назад</button>
-  </div>
-  <div class="modal-card profile-settings-card">
+<!-- НАСТРОЙКИ (как в Telegram: главная и разделы) -->
+<div id="settings-modal" class="page-panel settings-panel hidden">
+    <section class="spage" data-page="main">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Настройки</h2>
+      </header>
+      <div class="spage-body">
+        <div class="settings-hero">
+          <button class="hero-avatar-btn" data-open="profile" title="Изменить профиль"><span id="settings-hero-avatar" class="avatar-circle"></span></button>
+          <div id="settings-hero-name" class="hero-name"></div>
+          <div id="settings-hero-sub" class="hero-sub"></div>
+        </div>
+        <div id="settings-hero-info" class="settings-info hidden"></div>
+        <div class="settings-group">
+        <button class="settings-item" data-open="profile"><span class="si-icon" style="background:#3390ec"><svg class="ic"><use href="#i-user"/></svg></span><span class="si-title">Мой профиль</span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        <button class="settings-item" data-open="notifications"><span class="si-icon" style="background:#f76b15"><svg class="ic"><use href="#i-bell"/></svg></span><span class="si-title">Уведомления и звуки</span><span id="si-notif-value" class="si-value"></span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        <button class="settings-item" data-open="privacy"><span class="si-icon" style="background:#30a46c"><svg class="ic"><use href="#i-lock"/></svg></span><span class="si-title">Конфиденциальность</span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        <button class="settings-item" data-open="security"><span class="si-icon" style="background:#8e4ec6"><svg class="ic"><use href="#i-key"/></svg></span><span class="si-title">Безопасность</span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        <button class="settings-item" data-open="appearance"><span class="si-icon" style="background:#e5484d"><svg class="ic"><use href="#i-droplet"/></svg></span><span class="si-title">Оформление</span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        </div>
+        <div class="settings-group">
+        <button class="settings-item" data-open="premium"><span class="si-icon" style="background:#f5a623"><svg class="ic"><use href="#i-star"/></svg></span><span class="si-title">Premium</span><span id="si-premium-value" class="si-value"></span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        <button class="settings-item" data-open="about"><span class="si-icon" style="background:#8e8e93"><svg class="ic"><use href="#i-info"/></svg></span><span class="si-title">О приложении</span><svg class="ic ic-sm si-chev"><use href="#i-chevron-right"/></svg></button>
+        </div>
+        <div class="settings-group">
+          <button id="logout-btn" type="button" class="settings-item danger"><span class="si-icon" style="background:#df3f40"><svg class="ic"><use href="#i-logout"/></svg></span><span class="si-title">Выйти из аккаунта</span></button>
+        </div>
+      </div>
+    </section>
+    <section class="spage hidden" data-page="profile">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Мой профиль</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
     <div class="banner-section">
       <div id="banner-preview" class="banner-preview"><span id="banner-placeholder">🖼 Баннер профиля ⭐ Premium</span></div>
       <div class="banner-actions">
@@ -524,44 +566,6 @@
     <button id="self-verify-btn" class="secondary-btn hidden"></button>
     <button id="self-premium-btn" class="secondary-btn hidden"></button>
 
-    <p class="settings-label">Цвет темы</p>
-    <div id="theme-swatches" class="theme-swatches">
-      <button type="button" class="swatch" data-color="#2AABEE" style="background:#2AABEE"></button>
-      <button type="button" class="swatch" data-color="#30a46c" style="background:#30a46c"></button>
-      <button type="button" class="swatch" data-color="#8e4ec6" style="background:#8e4ec6"></button>
-      <button type="button" class="swatch" data-color="#e5484d" style="background:#e5484d"></button>
-      <button type="button" class="swatch" data-color="#f76b15" style="background:#f76b15"></button>
-      <label class="swatch custom-swatch" title="Свой цвет">
-        🎨
-        <input type="color" id="custom-color-input" value="#2AABEE" />
-      </label>
-    </div>
-
-    <label class="dark-mode-toggle">
-      <input type="checkbox" id="dark-mode-toggle" /> Тёмная тема
-    </label>
-
-    <p class="settings-label">Мои темы</p>
-    <div id="saved-themes-list" class="saved-themes-list"></div>
-    <button id="save-theme-btn" class="secondary-btn">💾 Сохранить текущую как тему</button>
-
-    <div id="premium-section" class="sec-section">
-      <p class="settings-label">⭐ Premium</p>
-      <p id="premium-status" class="sec-status"></p>
-      <p class="sec-title">Мой значок рядом с именем</p>
-      <p id="badge-current" class="sec-hint"></p>
-      <div id="badge-picks" class="badge-picks"></div>
-      <input id="badge-input" type="text" placeholder="Или впиши любой свой эмодзи" maxlength="16" autocomplete="off" />
-      <button id="badge-save-btn" type="button" class="secondary-btn">Сохранить значок</button>
-      <button id="premium-info-btn" type="button" class="secondary-btn">Что даёт Premium?</button>
-    </div>
-
-    <div id="privacy-section" class="sec-section">
-      <p class="settings-label">🕶 Приватность</p>
-      <label class="check-row"><input id="priv-hide-search" type="checkbox" /><span>Скрыть меня из поиска<small>Найти меня можно будет только по точному логину</small></span></label>
-      <label class="check-row"><input id="priv-hide-lastseen" type="checkbox" /><span>Скрыть «был в сети» ⭐<small>Только для Premium</small></span></label>
-    </div>
-
     <div id="username-section" class="sec-section">
       <p class="settings-label">🆔 Логин</p>
       <p id="username-current" class="sec-status"></p>
@@ -572,11 +576,50 @@
       <p id="username-msg" class="sec-msg"></p>
     </div>
 
+
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="notifications">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Уведомления и звуки</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
+        <label class="setting-row"><span class="sr-text"><b>Уведомления на этом устройстве</b><small id="notif-push-hint"></small></span><span class="switch"><input id="notif-push-toggle" type="checkbox" /><span></span></span></label>
+        <label class="setting-row"><span class="sr-text"><b>Звук новых сообщений</b><small>Когда приложение открыто, а этот чат не на экране</small></span><span class="switch"><input id="notif-sound-toggle" type="checkbox" /><span></span></span></label>
+        <label class="setting-row"><span class="sr-text"><b>Показывать текст сообщений</b><small>Если выключить, в уведомлении будет только имя отправителя</small></span><span class="switch"><input id="notif-preview-toggle" type="checkbox" /><span></span></span></label>
+        <button id="notif-test-btn" type="button" class="secondary-btn">Проверить уведомление</button>
+        <p class="sec-hint">Отдельный чат можно заглушить в его меню (три точки в шапке чата).</p>
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="privacy">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Конфиденциальность</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
+        <div id="privacy-section">
+          <label class="setting-row"><span class="sr-text"><b>Скрыть меня из поиска</b><small>Найти меня можно будет только по точному логину</small></span><span class="switch"><input id="priv-hide-search" type="checkbox" /><span></span></span></label>
+          <label class="setting-row"><span class="sr-text"><b>Скрыть «был в сети» ⭐</b><small>Только для Premium</small></span><span class="switch"><input id="priv-hide-lastseen" type="checkbox" /><span></span></span></label>
+          <div class="setting-row col">
+            <span class="sr-text"><b>Кто может написать мне первым</b><small>«Только знакомые»: те, с кем у нас уже есть общий чат или группа</small></span>
+            <select id="priv-dm-policy"><option value="all">Все</option><option value="shared">Только знакомые</option></select>
+          </div>
+        </div>
     <div id="blocked-section" class="sec-section">
       <p class="settings-label">🚫 Заблокированные</p>
       <div id="blocked-list"></div>
     </div>
 
+
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="security">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Безопасность</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
     <div id="security-section" class="sec-section">
       <p class="settings-label">🔐 Безопасность: двухфакторная защита</p>
       <p id="sec-status" class="sec-status">Загрузка…</p>
@@ -633,10 +676,108 @@
       <p id="sec-msg" class="sec-msg"></p>
     </div>
 
-    <div class="sec-section">
-      <button id="logout-btn" type="button" class="secondary-btn danger-btn">⎋ Выйти из аккаунта</button>
+
+        <div id="password-section" class="sec-section">
+          <p class="settings-label">🔑 Пароль</p>
+          <input id="pw-old" type="password" placeholder="Текущий пароль" autocomplete="current-password" />
+          <input id="pw-new" type="password" placeholder="Новый пароль (от 8 символов)" autocomplete="new-password" />
+          <button id="pw-save-btn" type="button" class="secondary-btn">Сменить пароль</button>
+          <p class="sec-hint">После смены пароля на всех остальных устройствах нужно будет войти заново.</p>
+          <p id="pw-msg" class="sec-msg"></p>
+        </div>
+
+        <div id="devices-section" class="sec-section">
+          <p class="settings-label">📱 Устройства</p>
+          <p class="sec-hint">Потерял телефон или заходил с чужого устройства? Выйди везде, и войти заново нужно будет всюду.</p>
+          <input id="logout-all-password" type="password" placeholder="Твой пароль" autocomplete="current-password" />
+          <button id="logout-all-btn" type="button" class="secondary-btn danger-btn">Выйти на всех устройствах</button>
+        </div>
+
+        <div id="delete-section" class="sec-section danger-zone">
+          <p class="settings-label">🗑 Удаление аккаунта</p>
+          <p class="sec-hint">Аккаунт, фото, истории, «Избранное» и все личные данные будут стёрты, войти будет нельзя. Твои сообщения в чатах останутся, но будут подписаны «Удалённый аккаунт». Это нельзя отменить.</p>
+          <input id="delete-password" type="password" placeholder="Твой пароль" autocomplete="current-password" />
+          <input id="delete-confirm" type="text" placeholder="Напиши слово УДАЛИТЬ" autocomplete="off" />
+          <button id="delete-account-btn" type="button" class="secondary-btn danger-btn">Удалить аккаунт навсегда</button>
+          <p id="delete-msg" class="sec-msg"></p>
+        </div>
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="appearance">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Оформление</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
+    <p class="settings-label">Цвет темы</p>
+    <div id="theme-swatches" class="theme-swatches">
+      <button type="button" class="swatch" data-color="#2AABEE" style="background:#2AABEE"></button>
+      <button type="button" class="swatch" data-color="#30a46c" style="background:#30a46c"></button>
+      <button type="button" class="swatch" data-color="#8e4ec6" style="background:#8e4ec6"></button>
+      <button type="button" class="swatch" data-color="#e5484d" style="background:#e5484d"></button>
+      <button type="button" class="swatch" data-color="#f76b15" style="background:#f76b15"></button>
+      <label class="swatch custom-swatch" title="Свой цвет">
+        🎨
+        <input type="color" id="custom-color-input" value="#2AABEE" />
+      </label>
     </div>
-  </div>
+
+    <label class="setting-row"><span class="sr-text"><b>Тёмная тема</b></span><span class="switch"><input type="checkbox" id="dark-mode-toggle" /><span></span></span></label>
+
+    <p class="settings-label">Мои темы</p>
+    <div id="saved-themes-list" class="saved-themes-list"></div>
+    <button id="save-theme-btn" class="secondary-btn">💾 Сохранить текущую как тему</button>
+
+
+    <p class="settings-label">Размер текста сообщений</p>
+    <div class="textsize-row"><span class="ts-small">А</span><input id="text-size-range" type="range" min="13" max="20" step="1" value="16" /><span class="ts-big">А</span></div>
+    <p id="text-size-value" class="sec-hint"></p>
+    <div class="textsize-preview">
+      <div class="bubble-demo in">Привет! Так выглядит текст сообщений.</div>
+      <div class="bubble-demo out">Размер меняется ползунком выше.</div>
+    </div>
+    <label class="setting-row"><span class="sr-text"><b>Меньше анимаций</b><small>Отключает плавные переходы и появление сообщений</small></span><span class="switch"><input id="reduce-motion-toggle" type="checkbox" /><span></span></span></label>
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="premium">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">Premium</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
+    <div id="premium-section" class="sec-section">
+      <p class="settings-label">⭐ Premium</p>
+      <p id="premium-status" class="sec-status"></p>
+      <p class="sec-title">Мой значок рядом с именем</p>
+      <p id="badge-current" class="sec-hint"></p>
+      <div id="badge-picks" class="badge-picks"></div>
+      <input id="badge-input" type="text" placeholder="Или впиши любой свой эмодзи" maxlength="16" autocomplete="off" />
+      <button id="badge-save-btn" type="button" class="secondary-btn">Сохранить значок</button>
+      <button id="premium-info-btn" type="button" class="secondary-btn">Что даёт Premium?</button>
+    </div>
+
+
+      </div></div>
+    </section>
+    <section class="spage hidden" data-page="about">
+      <header class="spage-header">
+        <button class="icon-btn" data-back title="Назад"><svg class="ic"><use href="#i-back"/></svg></button>
+        <h2 class="spage-title">О приложении</h2>
+      </header>
+      <div class="spage-body"><div class="spage-content">
+        <div class="about-hero"><div class="about-logo">Mío</div><div class="about-ver">Версия 1.0</div><p class="sec-hint">Мессенджер для семьи и друзей.</p></div>
+        <button id="install-app-btn" type="button" class="primary-btn hidden">Установить приложение</button>
+        <p id="install-hint" class="sec-hint"></p>
+        <p class="settings-label">Горячие клавиши (на компьютере)</p>
+        <div class="shortcuts">
+          <div class="sc-row"><span><kbd>Ctrl</kbd> + <kbd>K</kbd></span><span>Поиск</span></div>
+          <div class="sc-row"><span><kbd>Esc</kbd></span><span>Закрыть чат, окно или вернуться назад</span></div>
+          <div class="sc-row"><span><kbd>Enter</kbd></span><span>Отправить сообщение</span></div>
+          <div class="sc-row"><span><kbd>Ctrl</kbd> + <kbd>V</kbd></span><span>Вставить картинку из буфера</span></div>
+          <div class="sc-row"><span>Перетащить файл</span><span>Отправить в открытый чат</span></div>
+        </div>
+      </div></div>
+    </section>
 </div>
 
 <script src="/socket.io/socket.io.js"></script>

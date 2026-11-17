@@ -10,6 +10,11 @@ let chatFilter = '';          // текст в поиске слева
 let globalResults = [];       // люди, найденные по логину (от 3 символов)
 let scrollUnread = 0;         // сколько новых сообщений пришло, пока лента прокручена вверх
 const SAME_GROUP_MS = 5 * 60 * 1000;   // сообщения одного человека в пределах 5 минут — одна «серия»
+(() => {
+  const px = Number(localStorage.getItem('msgFontSize'));
+  if (px >= 13 && px <= 20) document.documentElement.style.setProperty('--msg-font', `${px}px`);
+  if (localStorage.getItem('reduceMotion') === '1') document.body.classList.add('reduce-motion');
+})();
 let authMode = 'login';
 const unreadIncomingIds = new Set();
 const onlineUserIds = new Set();
@@ -106,6 +111,10 @@ function translateError(err) {
     cannot_ban_admin: 'Администратора заблокировать нельзя',
     cannot_ban_self: 'Себя заблокировать нельзя',
     already_handled: 'Эта жалоба уже обработана',
+    same_password: 'Новый пароль совпадает со старым',
+    confirm_required: 'Напиши слово УДАЛИТЬ для подтверждения',
+    admin_cannot_delete: 'Администратор не может удалить аккаунт: сначала передай права другому',
+    dm_restricted: 'Этот человек принимает сообщения только от знакомых',
     username_reserved: 'Этот логин зарезервирован, выбери другой',
     same_username: 'Это и так твой логин',
     username_cooldown: 'Логин можно менять раз в 14 дней',
@@ -204,6 +213,7 @@ async function refreshMyProfile() {
   renderStoriesBar();
   updateComposerLock();
   renderChatList();
+  renderSettingsHero();
 }
 
 function renderMyAvatar() {
@@ -1200,6 +1210,7 @@ function onMessageNew(msg) {
   } else if (chat && msg.sender_id !== me.id) {
     chat.unread = (Number(chat.unread) || 0) + 1;
   }
+  if (msg.sender_id !== me.id && !(msg.chat_id === activeChatId && !document.hidden) && !(chat && chat.muted)) playMessageSound();
   if (chat) {
     chat.lastMessage = msg;
     chat.lastSenderName = msg.sender_name || chat.lastSenderName;
@@ -2534,12 +2545,22 @@ function endCallCleanup() {
 }
 
 // ========== PUSH-УВЕДОМЛЕНИЯ ==========
-async function setupPush() {
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+function pushSupported() {
+  return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+}
+
+// askPermission = true только когда человек сам нажал кнопку (на iPhone иначе браузер молча откажет)
+async function setupPush(askPermission = false) {
+  if (!pushSupported()) return false;
   try {
     const reg = await navigator.serviceWorker.register('/sw.js');
-    const permission = await Notification.requestPermission();
-    if (permission !== 'granted') return;
+    if (!askPermission && localStorage.getItem('pushEnabled') === '0') return false;
+    let permission = Notification.permission;
+    if (permission === 'default') {
+      if (!askPermission) return false;
+      permission = await Notification.requestPermission();
+    }
+    if (permission !== 'granted') return false;
 
     const { publicKey } = await api('/api/push/vapid-public-key');
 
@@ -2557,8 +2578,29 @@ async function setupPush() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(sub),
     });
+    localStorage.setItem('pushEnabled', '1');
+    return true;
   } catch (e) {
     console.warn('Push setup failed', e);
+    return false;
+  }
+}
+
+async function disablePush() {
+  localStorage.setItem('pushEnabled', '0');
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    if (sub) {
+      await api('/api/push/unsubscribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ endpoint: sub.endpoint }),
+      });
+      await sub.unsubscribe();
+    }
+  } catch (e) {
+    console.warn('Push disable failed', e);
   }
 }
 
@@ -2837,13 +2879,11 @@ $('#settings-btn').onclick = () => {
     selfPremiumBtn.classList.add('hidden');
   }
 
-  $('#settings-modal').classList.remove('hidden');
-};
-$('#close-settings-btn').onclick = () => {
-  $('#settings-modal').classList.add('hidden');
-  $('#sec-backup-list').textContent = '';
-  $('#sec-backup-box').classList.add('hidden');
-  $('#sec-password').value = '';
+  renderSettingsHero();
+  renderNotifSettings();
+  renderAppearanceSettings();
+  renderAboutSettings();
+  openSettings();
 };
 
 $('#save-name-btn').onclick = async () => {
@@ -3665,6 +3705,7 @@ function renderSettingsExtras() {
   $('#priv-hide-search').checked = !!me.hide_from_search;
   $('#priv-hide-lastseen').checked = prem && !!me.hide_last_seen;
   $('#priv-hide-lastseen').disabled = !prem;
+  $('#priv-dm-policy').value = me.dm_policy === 'shared' ? 'shared' : 'all';
   renderPremiumSettings();
   $('#username-current').textContent = `Сейчас: @${me.username}`;
   $('#username-input').value = '';
@@ -3909,7 +3950,10 @@ function closeChat(fromPop) {
     $('#empty-state').classList.remove('hidden');
   }, 300);
 }
-window.addEventListener('popstate', () => { if (activeChatId) closeChat(true); });
+window.addEventListener('popstate', () => {
+  if (settingsIsOpen()) { settingsBack(true); return; }
+  if (activeChatId) closeChat(true);
+});
 
 // --- кнопка «вниз» ---
 $('#messages').addEventListener('scroll', () => {
@@ -4023,7 +4067,9 @@ document.addEventListener('keydown', (e) => {
   }
   if (e.key !== 'Escape') return;
   if ($('#drawer').classList.contains('open')) { closeDrawer(); return; }
-  if (document.querySelector('.modal:not(.hidden), .page-panel:not(.hidden), #story-viewer:not(.hidden)')) return;
+  if (document.querySelector('.modal:not(.hidden), #story-viewer:not(.hidden)')) return;
+  if (settingsIsOpen()) { settingsBack(); return; }
+  if (document.querySelector('.page-panel:not(.hidden)')) return;
   if ($('#chat-filter-input').value) { $('#chat-filter-clear').click(); return; }
   if (!$('#reply-preview').classList.contains('hidden')) { $('#cancel-reply-btn').click(); return; }
   if (!$('#chat-search-bar').classList.contains('hidden')) return;
@@ -4116,3 +4162,315 @@ $('#message-input').addEventListener('paste', (e) => {
     attachDroppedFile(file);
   }
 });
+
+
+// ========== НАСТРОЙКИ КАК В TELEGRAM ==========
+const settingsStack = [];
+
+function settingsIsOpen() {
+  return !$('#settings-modal').classList.contains('hidden');
+}
+
+function showSettingsPage(name, back) {
+  document.querySelectorAll('#settings-modal .spage').forEach((p) => {
+    const on = p.dataset.page === name;
+    p.classList.toggle('hidden', !on);
+    if (on) {
+      p.classList.remove('slide-in', 'slide-back');
+      void p.offsetWidth; // перезапуск анимации
+      p.classList.add(back ? 'slide-back' : 'slide-in');
+      const body = p.querySelector('.spage-body');
+      if (body) body.scrollTop = 0;
+    }
+  });
+}
+
+function openSettings() {
+  if (settingsIsOpen()) return;
+  settingsStack.length = 0;
+  settingsStack.push('main');
+  showSettingsPage('main');
+  $('#settings-modal').classList.remove('hidden');
+  history.pushState({ mioSettings: 1 }, '');
+}
+
+function openSettingsPage(name) {
+  settingsStack.push(name);
+  history.pushState({ mioSettings: settingsStack.length }, '');
+  showSettingsPage(name);
+}
+
+function closeSettingsNow() {
+  $('#settings-modal').classList.add('hidden');
+  settingsStack.length = 0;
+  // чувствительные поля не оставляем заполненными
+  $('#sec-backup-list').textContent = '';
+  $('#sec-backup-box').classList.add('hidden');
+  ['#sec-password', '#pw-old', '#pw-new', '#logout-all-password', '#delete-password', '#delete-confirm', '#username-password'].forEach((sel) => {
+    const el = $(sel);
+    if (el) el.value = '';
+  });
+}
+
+// «Назад» по настройкам: сначала на предыдущий раздел, с главной — закрыть. Кнопка «назад» телефона работает так же
+function settingsBack(fromPop) {
+  if (fromPop !== true && history.state && history.state.mioSettings) {
+    history.back();
+    return;
+  }
+  if (settingsStack.length > 1) {
+    settingsStack.pop();
+    showSettingsPage(settingsStack[settingsStack.length - 1], true);
+  } else {
+    closeSettingsNow();
+  }
+}
+
+document.querySelectorAll('#settings-modal [data-back]').forEach((b) => { b.onclick = () => settingsBack(); });
+document.querySelectorAll('#settings-modal [data-open]').forEach((b) => { b.onclick = () => openSettingsPage(b.dataset.open); });
+
+// --- шапка настроек: фото, имя, данные ---
+function renderSettingsHero() {
+  if (!me) return;
+  setAvatarEl($('#settings-hero-avatar'), me);
+  $('#settings-hero-name').innerHTML = escapeHtml(me.display_name || me.username) + statusBadges(me);
+  $('#settings-hero-sub').textContent = `@${me.username}`;
+
+  const info = $('#settings-hero-info');
+  info.textContent = '';
+  const rows = [];
+  if (me.bio) rows.push(['📝', 'О себе', me.bio]);
+  if (me.phone) rows.push(['📞', 'Телефон', me.phone]);
+  if (me.birthday) {
+    const d = new Date(`${me.birthday}T00:00:00`);
+    if (!Number.isNaN(d.getTime())) rows.push(['🎂', 'Дата рождения', d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' })]);
+  }
+  rows.forEach(([icon, caption, value]) => {
+    const row = document.createElement('div');
+    row.className = 'info-row';
+    const ico = document.createElement('span');
+    ico.className = 'ir-icon';
+    ico.textContent = icon;
+    const col = document.createElement('div');
+    col.className = 'ir-text';
+    const v = document.createElement('div');
+    v.className = 'ir-value';
+    v.textContent = value;
+    const c = document.createElement('div');
+    c.className = 'ir-caption';
+    c.textContent = caption;
+    col.append(v, c);
+    row.append(ico, col);
+    info.appendChild(row);
+  });
+  info.classList.toggle('hidden', rows.length === 0);
+
+  $('#si-premium-value').textContent = isPremiumNow(me)
+    ? (me.premium_until ? `до ${new Date(me.premium_until).toLocaleDateString('ru-RU')}` : 'активен')
+    : 'не подключён';
+}
+
+// --- звук нового сообщения (рисуем сами, без файлов) ---
+let msgAudioCtx = null;
+function unlockAudio() {
+  if (!msgAudioCtx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (AC) msgAudioCtx = new AC();
+  }
+  if (msgAudioCtx && msgAudioCtx.state === 'suspended') msgAudioCtx.resume();
+}
+document.addEventListener('pointerdown', unlockAudio);
+document.addEventListener('keydown', unlockAudio);
+
+function playMessageSound(force) {
+  if (!force && localStorage.getItem('msgSound') === '0') return;
+  if (!msgAudioCtx || msgAudioCtx.state !== 'running') return;
+  const t0 = msgAudioCtx.currentTime;
+  [[880, 0], [1175, 0.1]].forEach(([freq, dt]) => {
+    const osc = msgAudioCtx.createOscillator();
+    const gain = msgAudioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(0.0001, t0 + dt);
+    gain.gain.exponentialRampToValueAtTime(0.18, t0 + dt + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.2);
+    osc.connect(gain);
+    gain.connect(msgAudioCtx.destination);
+    osc.start(t0 + dt);
+    osc.stop(t0 + dt + 0.22);
+  });
+}
+
+// --- уведомления и звуки ---
+async function isPushOn() {
+  if (!pushSupported() || Notification.permission !== 'granted' || localStorage.getItem('pushEnabled') === '0') return false;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && await reg.pushManager.getSubscription();
+    return !!sub;
+  } catch (e) {
+    return false;
+  }
+}
+
+async function renderNotifSettings() {
+  const supported = pushSupported();
+  const on = supported && await isPushOn();
+  $('#notif-push-toggle').checked = on;
+  $('#notif-push-toggle').disabled = !supported;
+  $('#notif-push-hint').textContent = !supported
+    ? 'Этот браузер не поддерживает уведомления. На iPhone сначала установи приложение на экран «Домой».'
+    : Notification.permission === 'denied'
+      ? 'Запрещено в настройках браузера: разреши уведомления для этого сайта'
+      : on ? 'Включены' : 'Выключены';
+  $('#notif-sound-toggle').checked = localStorage.getItem('msgSound') !== '0';
+  $('#notif-preview-toggle').checked = me && me.push_preview !== undefined ? !!Number(me.push_preview) : true;
+  $('#si-notif-value').textContent = on ? 'Вкл' : 'Выкл';
+}
+
+$('#notif-push-toggle').onchange = async (e) => {
+  if (e.target.checked) {
+    const ok = await setupPush(true);
+    if (!ok) showToast(pushSupported() && Notification.permission === 'denied' ? 'Уведомления запрещены в настройках браузера' : 'Не удалось включить уведомления');
+  } else {
+    await disablePush();
+  }
+  updateNotifBanner();
+  renderNotifSettings();
+};
+$('#notif-sound-toggle').onchange = (e) => {
+  localStorage.setItem('msgSound', e.target.checked ? '1' : '0');
+  if (e.target.checked) { unlockAudio(); playMessageSound(true); }
+};
+$('#notif-preview-toggle').onchange = (e) => savePrivacy({ pushPreview: e.target.checked });
+$('#notif-test-btn').onclick = async () => {
+  if (!pushSupported() || Notification.permission !== 'granted') { showToast('Сначала включи уведомления'); return; }
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.showNotification('Mío', { body: 'Так будут выглядеть уведомления' });
+  } catch (e) {
+    showToast('Не получилось показать уведомление');
+  }
+};
+
+// плашка в списке чатов: «Включить уведомления?»
+function updateNotifBanner() {
+  const show = pushSupported() && Notification.permission === 'default' && localStorage.getItem('notifBannerOff') !== '1';
+  $('#notif-banner').classList.toggle('hidden', !show);
+}
+$('#notif-banner-yes').onclick = async () => {
+  const ok = await setupPush(true);
+  updateNotifBanner();
+  renderNotifSettings();
+  if (!ok && pushSupported() && Notification.permission === 'denied') showToast('Уведомления запрещены в настройках браузера');
+};
+$('#notif-banner-no').onclick = () => {
+  localStorage.setItem('notifBannerOff', '1');
+  updateNotifBanner();
+};
+updateNotifBanner();
+
+// --- оформление: размер текста и анимации ---
+function renderAppearanceSettings() {
+  const px = Number(localStorage.getItem('msgFontSize')) || 16;
+  $('#text-size-range').value = String(px);
+  $('#text-size-value').textContent = `${px} px`;
+  $('#reduce-motion-toggle').checked = localStorage.getItem('reduceMotion') === '1';
+}
+$('#text-size-range').addEventListener('input', (e) => {
+  const px = Number(e.target.value);
+  document.documentElement.style.setProperty('--msg-font', `${px}px`);
+  localStorage.setItem('msgFontSize', String(px));
+  $('#text-size-value').textContent = `${px} px`;
+});
+$('#reduce-motion-toggle').onchange = (e) => {
+  document.body.classList.toggle('reduce-motion', e.target.checked);
+  localStorage.setItem('reduceMotion', e.target.checked ? '1' : '0');
+};
+
+// --- конфиденциальность ---
+$('#priv-dm-policy').onchange = (e) => savePrivacy({ dmPolicy: e.target.value });
+
+// --- безопасность: пароль, устройства, удаление ---
+function setMsg(sel, text, isError = false) {
+  const el = $(sel);
+  el.textContent = text;
+  el.className = 'sec-msg' + (isError ? ' error' : '');
+}
+
+$('#pw-save-btn').onclick = async () => {
+  const oldPassword = $('#pw-old').value;
+  const newPassword = $('#pw-new').value;
+  if (!oldPassword || !newPassword) return setMsg('#pw-msg', 'Введи старый и новый пароль', true);
+  const r = await api('/api/me/password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ oldPassword, newPassword }),
+  });
+  if (r.error) return setMsg('#pw-msg', translateError(r.error), true);
+  token = r.token; // этому устройству сервер сразу выдал новый вход
+  localStorage.setItem('token', token);
+  setMsg('#pw-msg', 'Пароль изменён ✔ На других устройствах вход отменён');
+  setTimeout(() => location.reload(), 900);
+};
+
+$('#logout-all-btn').onclick = async () => {
+  const password = $('#logout-all-password').value;
+  if (!password) { showToast('Введи свой пароль'); return; }
+  if (!confirm('Выйти на всех устройствах? На других войти нужно будет заново.')) return;
+  const r = await api('/api/me/logout-all', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password }),
+  });
+  if (r.error) { showToast(translateError(r.error)); return; }
+  token = r.token;
+  localStorage.setItem('token', token);
+  showToast('Готово: на других устройствах вход отменён');
+  setTimeout(() => location.reload(), 800);
+};
+
+$('#delete-account-btn').onclick = async () => {
+  const password = $('#delete-password').value;
+  const confirmWord = $('#delete-confirm').value;
+  if (!password) return setMsg('#delete-msg', 'Введи свой пароль', true);
+  if (!confirm('Удалить аккаунт навсегда? Это нельзя отменить.')) return;
+  const r = await api('/api/me/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password, confirm: confirmWord }),
+  });
+  if (r.error) return setMsg('#delete-msg', translateError(r.error), true);
+  localStorage.clear();
+  alert('Аккаунт удалён.');
+  location.reload();
+};
+
+// --- о приложении: установка на экран «Домой» ---
+let deferredInstall = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstall = e;
+  renderAboutSettings();
+});
+window.addEventListener('appinstalled', () => { deferredInstall = null; renderAboutSettings(); });
+
+function renderAboutSettings() {
+  const standalone = window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  $('#install-app-btn').classList.toggle('hidden', !deferredInstall || standalone);
+  $('#install-hint').textContent = standalone
+    ? 'Приложение уже установлено ✔'
+    : deferredInstall
+      ? 'Откроется как обычное приложение, без адресной строки.'
+      : isIOS
+        ? 'На iPhone: нажми «Поделиться» → «На экран Домой».'
+        : 'Когда браузер предложит установку, здесь появится кнопка.';
+}
+$('#install-app-btn').onclick = async () => {
+  if (!deferredInstall) return;
+  deferredInstall.prompt();
+  await deferredInstall.userChoice;
+  deferredInstall = null;
+  renderAboutSettings();
+};

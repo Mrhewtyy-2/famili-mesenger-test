@@ -267,6 +267,98 @@ async function getOrCreateSavedChat(userId) {
   return { code: 200, json: { id, created: true } };
 }
 
+// ---------- АККАУНТ: ТОКЕНЫ, ПАРОЛЬ, УДАЛЕНИЕ ----------
+// Токен хранит «версию»: когда человек жмёт «выйти на всех устройствах» или меняет пароль, версия растёт и старые токены перестают работать
+function signToken(user) {
+  return jwt.sign({ id: user.id, username: user.username, tv: Number(user.token_version || 0) }, JWT_SECRET, { expiresIn: '30d' });
+}
+
+function disconnectUserSockets(userId) {
+  for (const sk of io.sockets.sockets.values()) {
+    if (sk.user && sk.user.id === userId) sk.disconnect(true);
+  }
+  onlineUsers.delete(userId);
+}
+
+// Можно ли написать человеку первым: при настройке "только знакомым" нужен хотя бы один общий чат
+async function dmAllowed(fromId, toId) {
+  const t = await get('SELECT dm_policy FROM users WHERE id = ?', [toId]);
+  if (!t || t.dm_policy !== 'shared') return true;
+  return sharesChat(fromId, toId);
+}
+
+// Текст push-уведомления (человек может скрыть содержимое сообщений)
+function pushBody({ showText, isMentioned, previewText }) {
+  if (!showText) return isMentioned ? 'Вас упомянули' : 'Новое сообщение';
+  return isMentioned ? `Упомянул(а) вас: ${previewText}` : previewText;
+}
+
+async function changePasswordFor(user, oldPassword, newPassword) {
+  if (typeof oldPassword !== 'string' || typeof newPassword !== 'string') return { code: 400, json: { error: 'invalid_input' } };
+  if (!(await bcrypt.compare(oldPassword, user.password_hash))) return { code: 403, json: { error: 'wrong_password' } };
+  if (newPassword.length < 8 || newPassword.length > 72) return { code: 400, json: { error: 'weak_password' } };
+  if (newPassword === oldPassword) return { code: 400, json: { error: 'same_password' } };
+  const hash = await bcrypt.hash(newPassword, 11);
+  const tv = Number(user.token_version || 0) + 1;
+  await run('UPDATE users SET password_hash = ?, token_version = ? WHERE id = ?', [hash, tv, user.id]);
+  banCache.delete(user.id);
+  disconnectUserSockets(user.id);
+  return { code: 200, json: { ok: true }, user: { ...user, token_version: tv } };
+}
+
+async function logoutEverywhere(user) {
+  const tv = Number(user.token_version || 0) + 1;
+  await run('UPDATE users SET token_version = ? WHERE id = ?', [tv, user.id]);
+  banCache.delete(user.id);
+  disconnectUserSockets(user.id);
+  return { ...user, token_version: tv };
+}
+
+// Удаление аккаунта: личные данные стираются, аккаунт обезличивается, войти в него уже нельзя.
+// Сообщения в чатах остаются, но подписаны «Удалённый аккаунт».
+async function deleteAccount(user) {
+  const id = user.id;
+  const now = Date.now();
+  await run('DELETE FROM story_views WHERE user_id = ? OR story_id IN (SELECT id FROM stories WHERE user_id = ?)', [id, id]);
+  await run('DELETE FROM stories WHERE user_id = ?', [id]);
+  await run('DELETE FROM push_subscriptions WHERE user_id = ?', [id]);
+  await run('DELETE FROM blocks WHERE blocker_id = ? OR blocked_id = ?', [id, id]);
+  await run('DELETE FROM otp_codes WHERE user_id = ?', [id]);
+  await run('DELETE FROM muted_chats WHERE user_id = ?', [id]);
+  await run('DELETE FROM message_reactions WHERE user_id = ?', [id]);
+  await run('DELETE FROM message_reads WHERE user_id = ?', [id]);
+
+  // «Избранное» удаляется вместе с заметками
+  const saved = await all("SELECT c.id AS id FROM chats c JOIN chat_members m ON m.chat_id = c.id AND m.user_id = ? WHERE c.type = 'saved'", [id]);
+  for (const { id: cid } of saved) {
+    await run('DELETE FROM message_reactions WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)', [cid]);
+    await run('DELETE FROM message_reads WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)', [cid]);
+    await run('DELETE FROM messages WHERE chat_id = ?', [cid]);
+    await run('DELETE FROM chat_members WHERE chat_id = ?', [cid]);
+    await run('DELETE FROM chats WHERE id = ?', [cid]);
+  }
+  // из групп выходим, а личные чаты остаются у собеседников
+  await run("DELETE FROM chat_members WHERE user_id = ? AND chat_id IN (SELECT id FROM chats WHERE type = 'group')", [id]);
+
+  // старый логин ещё 30 дней никто не сможет занять
+  const tombstone = `deleted_${crypto.randomBytes(4).toString('hex')}`;
+  await run('INSERT INTO username_history (id, user_id, old_username, new_username, old_skel, changed_at) VALUES (?, ?, ?, ?, ?, ?)',
+    [uuid(), id, user.username, tombstone, nameSkeleton(user.username), now]);
+  const randomHash = await bcrypt.hash(crypto.randomBytes(24).toString('hex'), 10);
+  await run(
+    `UPDATE users SET username = ?, username_skel = ?, display_name = 'Удалённый аккаунт', avatar = NULL, bio = NULL, phone = NULL,
+       birthday = NULL, banner = NULL, email = NULL, email_verified = 0, tg_chat_id = NULL, tg_phone = NULL, totp_secret = NULL,
+       totp_enabled = 0, backup_codes = NULL, twofa_method = NULL, premium = 0, premium_until = NULL, premium_emoji = NULL,
+       is_admin = 0, hide_from_search = 1, password_hash = ?, banned = 1, ban_reason = 'Аккаунт удалён', banned_until = NULL,
+       banned_at = ?, deleted_at = ?, token_version = COALESCE(token_version, 0) + 1
+     WHERE id = ?`,
+    [tombstone, nameSkeleton(tombstone), randomHash, now, now, id]
+  );
+  banCache.delete(id);
+  disconnectUserSockets(id);
+  return { ok: true };
+}
+
 // Заглушка-хеш, чтобы вход под несуществующим логином занимал столько же времени, сколько и обычный
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', 10);
 
@@ -779,6 +871,11 @@ async function initDb() {
   // v4: баннер профиля
   try { await db.execute('ALTER TABLE users ADD COLUMN banner TEXT'); } catch (e) { /* уже существует */ }
 
+  // v7: версия токена (выход на всех устройствах), текст в уведомлениях, кто может писать, удаление аккаунта
+  for (const col of ['token_version INTEGER DEFAULT 0', 'push_preview INTEGER DEFAULT 1', "dm_policy TEXT DEFAULT 'all'", 'deleted_at INTEGER']) {
+    try { await db.execute(`ALTER TABLE users ADD COLUMN ${col}`); } catch (e) { /* уже существует */ }
+  }
+
   // Назначаем администратора (право верифицировать аккаунты) по логину из переменной окружения
   if (process.env.ADMIN_USERNAME) {
     try {
@@ -862,8 +959,8 @@ const banCache = new Map();
 async function getBanStatus(userId) {
   const c = banCache.get(userId);
   if (c && Date.now() - c.at < 15000) return c.val;
-  const u = await get('SELECT banned, ban_reason, banned_until FROM users WHERE id = ?', [userId]);
-  const val = u ? { exists: true, ban: activeBan(u) } : { exists: false, ban: null };
+  const u = await get('SELECT banned, ban_reason, banned_until, token_version FROM users WHERE id = ?', [userId]);
+  const val = u ? { exists: true, ban: activeBan(u), tv: Number(u.token_version || 0) } : { exists: false, ban: null, tv: 0 };
   banCache.set(userId, { at: Date.now(), val });
   return val;
 }
@@ -881,6 +978,8 @@ async function authMiddleware(req, res, next) {
   try {
     const st = await getBanStatus(payload.id);
     if (!st.exists) return res.status(401).json({ error: 'invalid_token' });
+    // токен выпущен до «выйти на всех устройствах» или до смены пароля
+    if (Number(payload.tv || 0) !== st.tv) return res.status(401).json({ error: 'invalid_token' });
     if (st.ban) return res.status(403).json({ error: 'banned', reason: st.ban.reason, until: st.ban.until });
     req.user = payload;
     next();
@@ -935,7 +1034,7 @@ app.post('/api/register', asyncRoute(async (req, res) => {
     await run('UPDATE users SET is_admin = 1 WHERE id = ?', [id]);
   }
 
-  const token = jwt.sign({ id, username: uname }, JWT_SECRET, { expiresIn: '30d' });
+  const token = signToken({ id, username: uname, token_version: 0 });
   res.json({ token, user: { id, username: uname } });
 }));
 
@@ -973,7 +1072,7 @@ app.post('/api/login', asyncRoute(async (req, res) => {
     return res.json({ needs2fa: true, method, methods, backup: !!user.totp_enabled, challengeToken, hint: methodHint(user, method) });
   }
 
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+  const token = signToken(user);
   res.json({ token, user: { id: user.id, username: user.username, avatar: user.avatar } });
 }));
 
@@ -1000,7 +1099,7 @@ app.post('/api/login/2fa', asyncRoute(async (req, res) => {
   }
   if (!v.ok) return res.status(v.error === 'too_many_attempts' ? 429 : 401).json({ error: v.error });
 
-  const token = jwt.sign({ id: user.id, username: user.username }, JWT_SECRET, { expiresIn: '30d' });
+  const token = signToken(user);
   res.json({ token, user: { id: user.id, username: user.username, avatar: user.avatar } });
 }));
 
@@ -1176,7 +1275,7 @@ app.post('/api/telegram/webhook', asyncRoute(async (req, res) => {
 }));
 
 app.get('/api/me', authMiddleware, asyncRoute(async (req, res) => {
-  const user = await get('SELECT id, username, avatar, display_name, bio, phone, birthday, verified, premium, premium_emoji, premium_until, hide_last_seen, hide_from_search, username_changed_at, banner, is_admin FROM users WHERE id = ?', [req.user.id]);
+  const user = await get('SELECT id, username, avatar, display_name, bio, phone, birthday, verified, premium, premium_emoji, premium_until, hide_last_seen, hide_from_search, username_changed_at, banner, dm_policy, push_preview, is_admin FROM users WHERE id = ?', [req.user.id]);
   res.json({ user });
 }));
 
@@ -1209,7 +1308,7 @@ app.patch('/api/me', authMiddleware, asyncRoute(async (req, res) => {
   }
   if (typeof phone === 'string') await run('UPDATE users SET phone = ? WHERE id = ?', [phone.trim().slice(0, 30) || null, req.user.id]);
   if (typeof birthday === 'string') await run('UPDATE users SET birthday = ? WHERE id = ?', [birthday.slice(0, 20) || null, req.user.id]);
-  const user = await get('SELECT id, username, avatar, display_name, bio, phone, birthday, verified, premium, premium_emoji, premium_until, hide_last_seen, hide_from_search, username_changed_at, banner, is_admin FROM users WHERE id = ?', [req.user.id]);
+  const user = await get('SELECT id, username, avatar, display_name, bio, phone, birthday, verified, premium, premium_emoji, premium_until, hide_last_seen, hide_from_search, username_changed_at, banner, dm_policy, push_preview, is_admin FROM users WHERE id = ?', [req.user.id]);
   res.json({ user });
 }));
 
@@ -1287,7 +1386,7 @@ app.post('/api/me/username', authMiddleware, pwLimiter, asyncRoute(async (req, r
   const r = await changeUsername(user, obj(req.body).username);
   if (r.code !== 200) return res.status(r.code).json(r.json);
   // старый токен хранит старое имя, поэтому выдаём новый
-  const token = jwt.sign({ id: user.id, username: r.newName }, JWT_SECRET, { expiresIn: '30d' });
+  const token = signToken({ ...user, username: r.newName });
   res.json({ ok: true, username: r.newName, token });
 }));
 
@@ -1301,6 +1400,14 @@ app.post('/api/me/privacy', authMiddleware, asyncRoute(async (req, res) => {
     if (b.hideLastSeen && !isPremiumRow(u)) return res.status(403).json({ error: 'premium_required' });
     await run('UPDATE users SET hide_last_seen = ? WHERE id = ?', [b.hideLastSeen ? 1 : 0, req.user.id]);
     if (b.hideLastSeen) emitPresence(req.user.id, false, true);
+  }
+  // Кто может написать мне первым: все или только те, с кем есть общий чат
+  if (b.dmPolicy === 'all' || b.dmPolicy === 'shared') {
+    await run('UPDATE users SET dm_policy = ? WHERE id = ?', [b.dmPolicy, req.user.id]);
+  }
+  // Показывать ли текст сообщений в уведомлениях
+  if (typeof b.pushPreview === 'boolean') {
+    await run('UPDATE users SET push_preview = ? WHERE id = ?', [b.pushPreview ? 1 : 0, req.user.id]);
   }
   res.json({ ok: true });
 }));
@@ -1317,6 +1424,32 @@ app.post('/api/me/badge', authMiddleware, asyncRoute(async (req, res) => {
 app.post('/api/chats/saved', authMiddleware, asyncRoute(async (req, res) => {
   const r = await getOrCreateSavedChat(req.user.id);
   res.status(r.code).json(r.json);
+}));
+
+app.post('/api/me/password', authMiddleware, pwLimiter, asyncRoute(async (req, res) => {
+  const user = await get('SELECT * FROM users WHERE id = ?', [req.user.id]);
+  if (!user) return res.status(401).json({ error: 'invalid_token' });
+  const { oldPassword, newPassword } = obj(req.body);
+  const r = await changePasswordFor(user, oldPassword, newPassword);
+  if (r.code !== 200) return res.status(r.code).json(r.json);
+  res.json({ ok: true, token: signToken(r.user) }); // этому устройству сразу выдаём новый токен
+}));
+
+app.post('/api/me/logout-all', authMiddleware, pwLimiter, asyncRoute(async (req, res) => {
+  const user = await requirePassword(req, res);
+  if (!user) return;
+  const updated = await logoutEverywhere(user);
+  res.json({ ok: true, token: signToken(updated) });
+}));
+
+app.post('/api/me/delete', authMiddleware, pwLimiter, asyncRoute(async (req, res) => {
+  const user = await requirePassword(req, res);
+  if (!user) return;
+  if (Number(user.is_admin)) return res.status(400).json({ error: 'admin_cannot_delete' });
+  const confirm = String(obj(req.body).confirm || '').trim().toLowerCase();
+  if (confirm !== 'удалить') return res.status(400).json({ error: 'confirm_required' });
+  await deleteAccount(user);
+  res.json({ ok: true });
 }));
 
 app.get('/api/blocks', authMiddleware, asyncRoute(async (req, res) => {
@@ -1421,6 +1554,7 @@ app.post('/api/chats', authMiddleware, asyncRoute(async (req, res) => {
 
   if (type === 'private') {
     if (await isBlockedEither(req.user.id, memberIds[0])) return res.status(403).json({ error: 'blocked' });
+    if (!(await dmAllowed(req.user.id, memberIds[0]))) return res.status(403).json({ error: 'dm_restricted' });
   } else {
     // в группу не добавляем тех, кто заблокировал создателя (или кого заблокировал он)
     const ph = memberIds.map(() => '?').join(',');
@@ -2218,7 +2352,7 @@ io.use(async (socket, next) => {
   }
   try {
     const st = await getBanStatus(payload.id);
-    if (!st.exists) return next(new Error('invalid_token'));
+    if (!st.exists || Number(payload.tv || 0) !== st.tv) return next(new Error('invalid_token'));
     if (st.ban) {
       const err = new Error('banned');
       err.data = { reason: st.ban.reason, until: st.ban.until };
@@ -2349,7 +2483,9 @@ io.on('connection', async (socket) => {
           const isMuted = await get('SELECT 1 as ok FROM muted_chats WHERE user_id = ? AND chat_id = ?', [user_id, chatId]);
           if (isMuted) continue;
         }
-        sendPushToUser(user_id, { title: senderName, body: isMentioned ? `Упомянул(а) вас: ${previewText}` : previewText, url: '/' });
+        const pv = await get('SELECT push_preview FROM users WHERE id = ?', [user_id]);
+        const showText = !pv || Number(pv.push_preview) !== 0;
+        sendPushToUser(user_id, { title: senderName, body: pushBody({ showText, isMentioned, previewText }), url: '/' });
       }
     } catch (err) {
       console.error('message:send failed', err);
